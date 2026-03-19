@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   FlatList, StyleSheet, KeyboardAvoidingView,
-  Platform, LayoutAnimation,
+  Platform, LayoutAnimation, Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTasks } from '../src/db/tasks';
@@ -60,13 +60,29 @@ export default function HomeScreen() {
     await refresh();
   };
 
-  const handleRelease = async () => {
+  const handleRelease = () => {
     if (expandedId == null) return;
-    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    // TODO: Confirmation + float-away animation + mood check
-    await releaseTask(expandedId);
-    setExpandedId(null);
-    await refresh();
+    const task = tasks.find((t) => t.id === expandedId);
+    const title = task?.title ?? '';
+
+    Alert.alert(
+      '手放しますか？',
+      `「${title}」を手放します`,
+      [
+        { text: 'やめる', style: 'cancel' },
+        {
+          text: '手放す',
+          style: 'destructive',
+          onPress: async () => {
+            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+            // TODO: float-away animation + mood check
+            await releaseTask(expandedId);
+            setExpandedId(null);
+            await refresh();
+          },
+        },
+      ],
+    );
   };
 
   const handleConsult = () => {
