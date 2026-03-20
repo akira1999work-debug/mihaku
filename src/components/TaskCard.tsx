@@ -112,12 +112,18 @@ export function TaskCard({
       {/* Main row: Ring + Title */}
       <View style={styles.mainRow}>
         <TouchableOpacity onPress={handleRingTap} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-          <BrushRing
-            total={totalCount}
-            completed={completedCount}
-            size={22}
-            isTaskCompleted={isCompleted}
-          />
+          {totalCount > 0 ? (
+            <BrushRing
+              total={totalCount}
+              completed={completedCount}
+              size={22}
+              isTaskCompleted={isCompleted}
+            />
+          ) : (
+            <View style={[styles.simpleRing, isCompleted && styles.simpleRingCompleted]}>
+              {isCompleted && <Text style={styles.simpleCheck}>✓</Text>}
+            </View>
+          )}
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.content} onPress={handleCardTap} activeOpacity={0.7}>
@@ -213,6 +219,25 @@ const styles = StyleSheet.create({
     borderStyle: 'dashed',
     shadowOpacity: 0,
     elevation: 0,
+  },
+  simpleRing: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 2,
+    borderColor: colors.ringUnfilled,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  simpleRingCompleted: {
+    borderColor: colors.sumiCompleted,
+    backgroundColor: colors.sumiCompleted,
+  },
+  simpleCheck: {
+    fontSize: 12,
+    color: '#FFF',
+    fontWeight: '700',
+    marginTop: -1,
   },
   mainRow: {
     flexDirection: 'row',
