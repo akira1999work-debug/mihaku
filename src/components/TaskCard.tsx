@@ -1,8 +1,12 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, TouchableOpacity, TextInput,
   StyleSheet, LayoutAnimation, Platform, UIManager,
 } from 'react-native';
+import Animated, {
+  useSharedValue, useAnimatedStyle,
+  withTiming, withDelay, runOnJS, Easing,
+} from 'react-native-reanimated';
 import { BrushRing } from './BrushRing';
 import { colors } from '../theme';
 import type { TaskWithSubs, SubTask } from '../types/task';
@@ -14,18 +18,22 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 interface Props {
   task: TaskWithSubs;
   expanded: boolean;
+  isReleasing?: boolean;
   onToggleExpand: (id: number) => void;
   onComplete: (id: number) => void;
   onUncomplete: (id: number) => void;
   onToggleSubtask: (id: number) => void;
   onAddSubtask: (taskId: number, title: string) => void;
   onUpdateMemo: (taskId: number, memo: string) => void;
+  onReleaseAnimationEnd?: () => void;
 }
 
 export function TaskCard({
-  task, expanded, onToggleExpand,
+  task, expanded, isReleasing,
+  onToggleExpand,
   onComplete, onUncomplete,
   onToggleSubtask, onAddSubtask, onUpdateMemo,
+  onReleaseAnimationEnd,
 }: Props) {
   const [subInput, setSubInput] = useState('');
   const [memoInput, setMemoInput] = useState(task.memo || '');
@@ -62,13 +70,46 @@ export function TaskCard({
 
   const cardOpacity = isReleased ? colors.releasedOpacity : isCompleted ? colors.completedOpacity : 1;
 
+  // Release animation (ふわっと空に消える)
+  const translateY = useSharedValue(0);
+  const animScale = useSharedValue(1);
+  const animOpacity = useSharedValue(1);
+
+  useEffect(() => {
+    if (isReleasing) {
+      const easing = Easing.out(Easing.cubic);
+      const duration = 650;
+      translateY.value = withTiming(-120, { duration, easing });
+      animScale.value = withTiming(0.92, { duration, easing });
+      animOpacity.value = withDelay(100,
+        withTiming(0, { duration: duration - 100, easing }, (finished) => {
+          if (finished && onReleaseAnimationEnd) {
+            runOnJS(onReleaseAnimationEnd)();
+          }
+        }),
+      );
+    }
+  }, [isReleasing]);
+
+  const releaseAnimStyle = useAnimatedStyle(() => ({
+    transform: [
+      { translateY: translateY.value },
+      { scale: animScale.value },
+    ],
+    opacity: animOpacity.value,
+  }));
+
   return (
-    <View style={[
-      styles.card,
-      isCompleted && styles.completedCard,
-      isReleased && styles.releasedCard,
-      { opacity: cardOpacity },
-    ]}>
+    <Animated.View
+      style={[
+        styles.card,
+        isCompleted && styles.completedCard,
+        isReleased && styles.releasedCard,
+        { opacity: isReleasing ? undefined : cardOpacity },
+        isReleasing && releaseAnimStyle,
+      ]}
+      pointerEvents={isReleasing ? 'none' : 'auto'}
+    >
       {/* Main row: Ring + Title */}
       <View style={styles.mainRow}>
         <TouchableOpacity onPress={handleRingTap} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
@@ -146,7 +187,7 @@ export function TaskCard({
           ) : null}
         </View>
       )}
-    </View>
+    </Animated.View>
   );
 }
 

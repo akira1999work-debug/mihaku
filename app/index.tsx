@@ -24,6 +24,7 @@ export default function HomeScreen() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [releasingId, setReleasingId] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     const result = await getTodayTasks();
@@ -72,18 +73,24 @@ export default function HomeScreen() {
         { text: 'やめる', style: 'cancel' },
         {
           text: '手放す',
-          style: 'destructive',
-          onPress: async () => {
-            LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-            // TODO: float-away animation + mood check
-            await releaseTask(expandedId);
+          onPress: () => {
+            // Start float-away animation, DB update happens on animation end
             setExpandedId(null);
-            await refresh();
+            setReleasingId(expandedId);
           },
         },
       ],
     );
   };
+
+  const handleReleaseAnimationEnd = useCallback(async () => {
+    if (releasingId == null) return;
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    await releaseTask(releasingId);
+    setReleasingId(null);
+    // TODO: Show mood check
+    await refresh();
+  }, [releasingId, releaseTask, refresh]);
 
   const handleConsult = () => {
     // TODO: Navigate to meeting screen
@@ -165,12 +172,14 @@ export default function HomeScreen() {
             <TaskCard
               task={item}
               expanded={expandedId === item.id}
+              isReleasing={releasingId === item.id}
               onToggleExpand={handleToggleExpand}
               onComplete={handleComplete}
               onUncomplete={handleUncomplete}
               onToggleSubtask={handleToggleSubtask}
               onAddSubtask={handleAddSubtask}
               onUpdateMemo={handleUpdateMemo}
+              onReleaseAnimationEnd={handleReleaseAnimationEnd}
             />
           )}
           contentContainerStyle={styles.list}
