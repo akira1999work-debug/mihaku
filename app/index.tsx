@@ -2,13 +2,15 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   FlatList, StyleSheet, KeyboardAvoidingView,
-  Platform, LayoutAnimation, Alert,
+  Platform, LayoutAnimation,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useTasks } from '../src/db/tasks';
 import { TaskCard } from '../src/components/TaskCard';
 import { FloatingActionBar } from '../src/components/FloatingActionBar';
+import { ConfirmModal } from '../src/components/ConfirmModal';
 import { colors } from '../src/theme';
+import { getDailyWord } from '../src/data/dailyWords';
 import type { TaskWithSubs } from '../src/types/task';
 
 const MAX_TODAY = 3;
@@ -25,6 +27,7 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [releasingId, setReleasingId] = useState<number | null>(null);
+  const [confirmRelease, setConfirmRelease] = useState(false);
 
   const refresh = useCallback(async () => {
     const result = await getTodayTasks();
@@ -63,24 +66,17 @@ export default function HomeScreen() {
 
   const handleRelease = () => {
     if (expandedId == null) return;
-    const task = tasks.find((t) => t.id === expandedId);
-    const title = task?.title ?? '';
+    setConfirmRelease(true);
+  };
 
-    Alert.alert(
-      '手放しますか？',
-      `「${title}」を手放します`,
-      [
-        { text: 'やめる', style: 'cancel' },
-        {
-          text: '手放す',
-          onPress: () => {
-            // Start float-away animation, DB update happens on animation end
-            setExpandedId(null);
-            setReleasingId(expandedId);
-          },
-        },
-      ],
-    );
+  const handleConfirmRelease = () => {
+    setConfirmRelease(false);
+    setReleasingId(expandedId);
+    setExpandedId(null);
+  };
+
+  const handleCancelRelease = () => {
+    setConfirmRelease(false);
   };
 
   const handleReleaseAnimationEnd = useCallback(async () => {
@@ -162,6 +158,7 @@ export default function HomeScreen() {
             </View>
           </View>
           <Text style={styles.headerSub}>{statusText}</Text>
+          <Text style={styles.dailyWord}>{getDailyWord()}</Text>
         </View>
 
         {/* Task list */}
@@ -183,9 +180,10 @@ export default function HomeScreen() {
             />
           )}
           contentContainerStyle={styles.list}
+          ListFooterComponentStyle={styles.listFooter}
           ListFooterComponent={
             <>
-              {/* Released tasks — stacked */}
+              {/* Released tasks — stacked at bottom */}
               {releasedTasks.length > 0 && (
                 <View style={styles.releasedStack}>
                   {releasedTasks.map((task, i) => (
@@ -254,6 +252,17 @@ export default function HomeScreen() {
             onEdit={handleEdit}
           />
         )}
+
+        {/* Release confirmation modal */}
+        <ConfirmModal
+          visible={confirmRelease}
+          title="手放しますか？"
+          message={`「${tasks.find((t) => t.id === expandedId)?.title ?? ''}」を手放します`}
+          confirmLabel="手放す"
+          cancelLabel="やめる"
+          onConfirm={handleConfirmRelease}
+          onCancel={handleCancelRelease}
+        />
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -315,10 +324,22 @@ const styles = StyleSheet.create({
     marginTop: 6,
     letterSpacing: 1,
   },
+  dailyWord: {
+    fontSize: 12,
+    color: colors.textSub,
+    marginTop: 12,
+    lineHeight: 20,
+    fontStyle: 'italic',
+    letterSpacing: 0.3,
+  },
   list: {
     paddingHorizontal: 24,
     paddingTop: 8,
     flexGrow: 1,
+  },
+  listFooter: {
+    flexGrow: 1,
+    justifyContent: 'flex-end',
   },
   releasedStack: {
     marginTop: 8,

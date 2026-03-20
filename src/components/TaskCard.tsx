@@ -77,12 +77,11 @@ export function TaskCard({
 
   useEffect(() => {
     if (isReleasing) {
-      const easing = Easing.out(Easing.cubic);
-      const duration = 650;
-      translateY.value = withTiming(-120, { duration, easing });
-      animScale.value = withTiming(0.92, { duration, easing });
-      animOpacity.value = withDelay(100,
-        withTiming(0, { duration: duration - 100, easing }, (finished) => {
+      const easing = Easing.bezierFn(0.25, 0.1, 0.25, 1);
+      translateY.value = withTiming(-250, { duration: 2000, easing });
+      animScale.value = withTiming(0.85, { duration: 2000, easing });
+      animOpacity.value = withDelay(600,
+        withTiming(0, { duration: 1400, easing }, (finished) => {
           if (finished && onReleaseAnimationEnd) {
             runOnJS(onReleaseAnimationEnd)();
           }
