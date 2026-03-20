@@ -9,9 +9,11 @@ import type { Task, SubTask, TaskWithSubs, TaskStatus } from '../types/task';
 let tasks: Task[] = [];
 let subtasks: SubTask[] = [];
 let moodChecks: { id: number; task_id: number; mood: number; action: string; created_at: string }[] = [];
+let releaseLogs: { id: number; task_id: number; task_title: string; reason: string | null; released_at: string }[] = [];
 let nextTaskId = 1;
 let nextSubId = 1;
 let nextMoodId = 1;
+let nextReleaseLogId = 1;
 
 function todayString(): string {
   return new Date().toISOString().slice(0, 10);
@@ -80,11 +82,18 @@ export function useMemoryTasks() {
     }
   }, []);
 
-  const releaseTask = useCallback(async (id: number): Promise<void> => {
+  const releaseTask = useCallback(async (id: number, reason?: string): Promise<void> => {
     const task = tasks.find((t) => t.id === id);
     if (task) {
       task.status = 'released';
       task.released_at = nowString();
+      releaseLogs.push({
+        id: nextReleaseLogId++,
+        task_id: id,
+        task_title: task.title,
+        reason: reason ?? null,
+        released_at: nowString(),
+      });
     }
   }, []);
 
@@ -127,6 +136,11 @@ export function useMemoryTasks() {
     });
   }, []);
 
+  const getReleaseLogs = useCallback(async (date?: string) => {
+    const d = date ?? todayString();
+    return releaseLogs.filter((r) => r.released_at.slice(0, 10) === d);
+  }, []);
+
   const selectForToday = useCallback(async (id: number): Promise<void> => {
     const task = tasks.find((t) => t.id === id);
     if (task) {
@@ -145,5 +159,6 @@ export function useMemoryTasks() {
     updateTask, updateMemo,
     addSubtask, toggleSubtask,
     saveMoodCheck, selectForToday,
+    getReleaseLogs,
   };
 }

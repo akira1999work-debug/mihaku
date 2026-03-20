@@ -71,10 +71,27 @@ export function useTasks() {
     );
   }, [db]);
 
-  const releaseTask = useCallback(async (id: number): Promise<void> => {
+  const releaseTask = useCallback(async (id: number, reason?: string): Promise<void> => {
+    const task = await db.getFirstAsync<Task>(
+      `SELECT * FROM tasks WHERE id = ?`, [id]
+    );
     await db.runAsync(
       `UPDATE tasks SET status = 'released', released_at = datetime('now') WHERE id = ?`,
       [id]
+    );
+    await db.runAsync(
+      `INSERT INTO release_logs (task_id, task_title, reason) VALUES (?, ?, ?)`,
+      [id, task?.title ?? '', reason ?? null]
+    );
+  }, [db]);
+
+  const getReleaseLogs = useCallback(async (date?: string): Promise<Array<{
+    id: number; task_id: number; task_title: string; reason: string | null; released_at: string;
+  }>> => {
+    const d = date ?? todayString();
+    return db.getAllAsync(
+      `SELECT * FROM release_logs WHERE date(released_at) = ? ORDER BY released_at DESC`,
+      [d]
     );
   }, [db]);
 
@@ -128,5 +145,6 @@ export function useTasks() {
     updateTask, updateMemo,
     addSubtask, toggleSubtask,
     saveMoodCheck, selectForToday,
+    getReleaseLogs,
   };
 }

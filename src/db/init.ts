@@ -37,5 +37,13 @@ export async function initDatabase(db: SQLiteDatabase) {
       action TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS release_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER NOT NULL REFERENCES tasks(id),
+      task_title TEXT NOT NULL,
+      reason TEXT,
+      released_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
