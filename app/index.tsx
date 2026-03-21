@@ -9,11 +9,17 @@ import { useTasks } from '../src/db/tasks';
 import { TaskCard } from '../src/components/TaskCard';
 import { FloatingActionBar } from '../src/components/FloatingActionBar';
 import { ConfirmModal } from '../src/components/ConfirmModal';
+import { VoiceOverlay } from '../src/components/VoiceOverlay';
+import { VoiceChips } from '../src/components/VoiceChips';
+import { useSpeechInput } from '../src/hooks/useSpeechInput';
+import { splitChips } from '../src/utils/splitChips';
 import { colors } from '../src/theme';
 import { getDailyWord } from '../src/data/dailyWords';
 import type { TaskWithSubs } from '../src/types/task';
 
 const MAX_TODAY = 3;
+
+type VoicePhase = 'idle' | 'recording' | 'chips';
 
 export default function HomeScreen() {
   const {
@@ -28,6 +34,11 @@ export default function HomeScreen() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [releasingId, setReleasingId] = useState<number | null>(null);
   const [confirmRelease, setConfirmRelease] = useState(false);
+
+  // 音声入力
+  const speech = useSpeechInput();
+  const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
+  const [chips, setChips] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
     const result = await getTodayTasks();
@@ -51,10 +62,49 @@ export default function HomeScreen() {
     await refresh();
   };
 
+  // --- 音声入力ハンドラ ---
+
+  const handleVoiceStart = async () => {
+    await speech.start();
+    setVoicePhase('recording');
+  };
+
+  const handleVoiceStop = () => {
+    speech.stop();
+    const text = speech.transcript;
+    if (text.trim()) {
+      const split = splitChips(text);
+      setChips(split.length > 0 ? split : [text.trim()]);
+      setVoicePhase('chips');
+    } else {
+      setVoicePhase('idle');
+    }
+  };
+
+  const handleVoiceCancel = () => {
+    speech.stop();
+    speech.clear();
+    setVoicePhase('idle');
+    setChips([]);
+  };
+
+  const handlePickChip = async (text: string) => {
+    if (!showAddButton) return;
+    await addTask(text);
+    await refresh();
+  };
+
+  const handleChipsDone = () => {
+    setVoicePhase('idle');
+    setChips([]);
+    speech.clear();
+  };
+
+  // --- 既存ハンドラ ---
+
   const handleComplete = async (id: number) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     await completeTask(id);
-    // TODO: Show mood check
     await refresh();
   };
 
@@ -84,7 +134,6 @@ export default function HomeScreen() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     await releaseTask(releasingId);
     setReleasingId(null);
-    // TODO: Show mood check
     await refresh();
   }, [releasingId, releaseTask, refresh]);
 
@@ -130,6 +179,25 @@ export default function HomeScreen() {
         <View style={styles.center}>
           <Text style={styles.loadingText}>...</Text>
         </View>
+      </SafeAreaView>
+    );
+  }
+
+  // チップ選択モード: 画面全体をチップ表示に切り替え
+  if (voicePhase === 'chips' && chips.length > 0) {
+    return (
+      <SafeAreaView style={styles.container}>
+        {/* Header */}
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>mihaku</Text>
+          <Text style={styles.headerSub}>拾いたいものを選んで</Text>
+        </View>
+
+        <VoiceChips
+          chips={chips}
+          onPickChip={handlePickChip}
+          onDone={handleChipsDone}
+        />
       </SafeAreaView>
     );
   }
@@ -210,11 +278,21 @@ export default function HomeScreen() {
                 </View>
               )}
 
-              {/* Empty state */}
+              {/* Empty state — 大きなマイクボタン */}
               {tasks.length === 0 && (
                 <View style={styles.emptyContainer}>
+                  <TouchableOpacity
+                    style={styles.emptyMicBtn}
+                    onPress={handleVoiceStart}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.emptyMicIcon}>🎙️</Text>
+                  </TouchableOpacity>
                   <Text style={styles.emptyText}>
-                    今日、意識して時間を守りたいことを{'\n'}教えてください
+                    頭の中、全部出してみて
+                  </Text>
+                  <Text style={styles.emptyHint}>
+                    タップして話す
                   </Text>
                 </View>
               )}
@@ -222,8 +300,8 @@ export default function HomeScreen() {
           }
         />
 
-        {/* Add button */}
-        {showAddButton && (
+        {/* Input row with mic button */}
+        {showAddButton && tasks.length > 0 && (
           <View style={styles.inputRow}>
             <TextInput
               style={styles.input}
@@ -234,6 +312,13 @@ export default function HomeScreen() {
               onSubmitEditing={handleAdd}
               returnKeyType="done"
             />
+            <TouchableOpacity
+              style={styles.micBtn}
+              onPress={handleVoiceStart}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.micBtnText}>🎙️</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={[styles.addBtn, !input.trim() && styles.addBtnDisabled]}
               onPress={handleAdd}
@@ -262,6 +347,15 @@ export default function HomeScreen() {
           cancelLabel="やめる"
           onConfirm={handleConfirmRelease}
           onCancel={handleCancelRelease}
+        />
+
+        {/* Voice recording overlay */}
+        <VoiceOverlay
+          visible={voicePhase === 'recording'}
+          transcript={speech.transcript}
+          isListening={speech.isListening}
+          onStop={handleVoiceStop}
+          onCancel={handleVoiceCancel}
         />
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -351,7 +445,26 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingTop: 80,
+    paddingTop: 60,
+  },
+  emptyMicBtn: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: colors.cardBg,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: colors.divider,
+    shadowColor: '#d4a574',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.25,
+    shadowRadius: 16,
+    elevation: 4,
+    marginBottom: 20,
+  },
+  emptyMicIcon: {
+    fontSize: 36,
   },
   emptyText: {
     fontSize: 15,
@@ -359,6 +472,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 26,
     letterSpacing: 0.5,
+  },
+  emptyHint: {
+    fontSize: 12,
+    color: colors.textSub,
+    marginTop: 8,
+    letterSpacing: 0.5,
+    opacity: 0.6,
   },
   inputRow: {
     flexDirection: 'row',
@@ -378,6 +498,17 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     color: colors.text,
   },
+  micBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 8,
+  },
+  micBtnText: {
+    fontSize: 20,
+  },
   addBtn: {
     width: 40,
     height: 40,
@@ -385,7 +516,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.sumiInk,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 12,
+    marginLeft: 8,
   },
   addBtnDisabled: {
     backgroundColor: colors.ringUnfilled,
