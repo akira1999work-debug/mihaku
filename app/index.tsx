@@ -11,6 +11,8 @@ import { FloatingActionBar } from '../src/components/FloatingActionBar';
 import { ConfirmModal } from '../src/components/ConfirmModal';
 import { VoiceOverlay } from '../src/components/VoiceOverlay';
 import { VoiceChips } from '../src/components/VoiceChips';
+import { RefineView } from '../src/components/RefineView';
+import { AiSettingsView } from '../src/components/AiSettingsView';
 import { useSpeechInput } from '../src/hooks/useSpeechInput';
 import { splitChips } from '../src/utils/splitChips';
 import { colors } from '../src/theme';
@@ -19,7 +21,7 @@ import type { TaskWithSubs } from '../src/types/task';
 
 const MAX_TODAY = 3;
 
-type VoicePhase = 'idle' | 'recording' | 'chips';
+type VoicePhase = 'idle' | 'recording' | 'chips' | 'refining';
 
 export default function HomeScreen() {
   const {
@@ -39,6 +41,8 @@ export default function HomeScreen() {
   const speech = useSpeechInput();
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const [chips, setChips] = useState<string[]>([]);
+  const [rawVoiceText, setRawVoiceText] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
 
   const refresh = useCallback(async () => {
     const result = await getTodayTasks();
@@ -73,9 +77,9 @@ export default function HomeScreen() {
     speech.stop();
     const text = speech.transcript;
     if (text.trim()) {
-      const split = splitChips(text);
-      setChips(split.length > 0 ? split : [text.trim()]);
-      setVoicePhase('chips');
+      // AI整形フェーズへ（ふるう）
+      setRawVoiceText(text);
+      setVoicePhase('refining');
     } else {
       setVoicePhase('idle');
     }
@@ -97,6 +101,26 @@ export default function HomeScreen() {
   const handleChipsDone = () => {
     setVoicePhase('idle');
     setChips([]);
+    speech.clear();
+  };
+
+  /** ふるう確定 — ミハク候補をタスクとして追加 */
+  const handleRefineConfirm = async (mihakuTitles: string[], _kumoTitles: string[]) => {
+    for (const title of mihakuTitles) {
+      if (activeTasks.length < MAX_TODAY) {
+        await addTask(title);
+      }
+    }
+    // TODO: kumo をストックに保存（iter8以降）
+    await refresh();
+    setVoicePhase('idle');
+    setRawVoiceText('');
+    speech.clear();
+  };
+
+  const handleRefineCancel = () => {
+    setVoicePhase('idle');
+    setRawVoiceText('');
     speech.clear();
   };
 
@@ -183,7 +207,38 @@ export default function HomeScreen() {
     );
   }
 
-  // チップ選択モード: 画面全体をチップ表示に切り替え
+  // AI設定画面
+  if (showSettings) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>mihaku</Text>
+          <Text style={styles.headerSub}>設定</Text>
+        </View>
+        <AiSettingsView onClose={() => setShowSettings(false)} />
+      </SafeAreaView>
+    );
+  }
+
+  // ふるいモード: AI整形画面
+  if (voicePhase === 'refining' && rawVoiceText) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.header}>
+          <Text style={styles.headerTitle}>mihaku</Text>
+          <Text style={styles.headerSub}>ふるいにかけています</Text>
+        </View>
+
+        <RefineView
+          rawText={rawVoiceText}
+          onConfirm={handleRefineConfirm}
+          onCancel={handleRefineCancel}
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // チップ選択モード（フォールバック）: 画面全体をチップ表示に切り替え
   if (voicePhase === 'chips' && chips.length > 0) {
     return (
       <SafeAreaView style={styles.container}>
@@ -217,6 +272,9 @@ export default function HomeScreen() {
           <View style={styles.headerRow}>
             <Text style={styles.headerTitle}>mihaku</Text>
             <View style={styles.headerActions}>
+              <TouchableOpacity style={styles.headerBtn} onPress={() => setShowSettings(true)}>
+                <Text style={styles.headerBtnText}>⚙</Text>
+              </TouchableOpacity>
               <TouchableOpacity style={styles.headerBtn} onPress={() => {/* TODO: full meeting */}}>
                 <Text style={styles.headerBtnText}>☕</Text>
               </TouchableOpacity>

@@ -1,0 +1,11 @@
+{
+  "name": "mihaku-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Local proxy server — routes mihaku AI requests through Claude Code CLI",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {}
+}
