@@ -11,9 +11,9 @@ import {
   ScrollView,
 } from 'react-native';
 import { colors } from '../theme';
-import { refineText } from '../services/ai';
+import { extractTasks, classifyTasks } from '../services/ai';
 import { loadAiConfig } from '../services/ai-config-store';
-import type { AiConfig } from '../services/ai-types';
+import type { TaskItem as AITaskItem } from '../services/ai-types';
 
 interface TaskItem {
   title: string;
@@ -28,14 +28,16 @@ interface RefineViewProps {
   onCancel: () => void;
 }
 
-type Phase = 'loading' | 'ready' | 'error';
+type Phase = 'extracting' | 'classifying' | 'ready' | 'error';
 
 export function RefineView({ rawText, onConfirm, onCancel }: RefineViewProps) {
-  const [phase, setPhase] = useState<Phase>('loading');
+  const [phase, setPhase] = useState<Phase>('extracting');
+  const [allTasks, setAllTasks] = useState<TaskItem[]>([]);
   const [mihaku, setMihaku] = useState<TaskItem[]>([]);
   const [kumo, setKumo] = useState<TaskItem[]>([]);
   const [error, setError] = useState('');
   const fadeAnim = useRef(new Animated.Value(0)).current;
+  const classifyAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     let cancelled = false;
@@ -43,17 +45,33 @@ export function RefineView({ rawText, onConfirm, onCancel }: RefineViewProps) {
     async function run() {
       try {
         const config = await loadAiConfig();
-        const result = await refineText(rawText, config);
 
+        // Step 1: タスク抽出（Haiku・高速）→ 即表示
+        const extracted = await extractTasks(rawText, config);
         if (cancelled) return;
 
-        setMihaku(result.mihaku ?? []);
-        setKumo(result.kumo ?? []);
-        setPhase('ready');
+        const tasks = extracted.tasks ?? [];
+        setAllTasks(tasks);
+        setMihaku(tasks); // 分類前は全てミハク側に仮表示
+        setPhase('classifying');
 
         Animated.timing(fadeAnim, {
           toValue: 1,
           duration: 400,
+          useNativeDriver: true,
+        }).start();
+
+        // Step 2: 分類（Sonnet・高精度）→ アニメーションで並び替え
+        const classified = await classifyTasks(tasks, config);
+        if (cancelled) return;
+
+        setMihaku(classified.mihaku ?? []);
+        setKumo(classified.kumo ?? []);
+        setPhase('ready');
+
+        Animated.timing(classifyAnim, {
+          toValue: 1,
+          duration: 500,
           useNativeDriver: true,
         }).start();
       } catch (err: unknown) {
@@ -66,7 +84,7 @@ export function RefineView({ rawText, onConfirm, onCancel }: RefineViewProps) {
 
     run();
     return () => { cancelled = true; };
-  }, [rawText, fadeAnim]);
+  }, [rawText, fadeAnim, classifyAnim]);
 
   /** タスクをクモ→ミハクに移動 */
   const moveToMihaku = (index: number) => {
@@ -91,14 +109,14 @@ export function RefineView({ rawText, onConfirm, onCancel }: RefineViewProps) {
     );
   };
 
-  // ローディング
-  if (phase === 'loading') {
+  // Step 1 ローディング: タスク抽出中
+  if (phase === 'extracting') {
     return (
       <View style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.sumiInk} />
-          <Text style={styles.loadingText}>ふるいにかけています...</Text>
-          <Text style={styles.loadingHint}>AIがタスクを整理中</Text>
+          <Text style={styles.loadingText}>タスクを読み取っています...</Text>
+          <Text style={styles.loadingHint}>音声からタスクを抽出中</Text>
         </View>
       </View>
     );
@@ -196,14 +214,22 @@ export function RefineView({ rawText, onConfirm, onCancel }: RefineViewProps) {
       {/* フッター */}
       <View style={styles.footer}>
         <Text style={styles.footerHint}>
-          タップでミハク⇔クモを移動
+          {phase === 'classifying'
+            ? 'AIが分類しています...'
+            : 'タップでミハク⇔クモを移動'}
         </Text>
         <View style={styles.footerButtons}>
           <TouchableOpacity style={styles.backBtn} onPress={onCancel}>
             <Text style={styles.backBtnText}>やり直す</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
-            <Text style={styles.confirmBtnText}>これでOK</Text>
+          <TouchableOpacity
+            style={[styles.confirmBtn, phase === 'classifying' && styles.confirmBtnDisabled]}
+            onPress={handleConfirm}
+            disabled={phase === 'classifying'}
+          >
+            <Text style={styles.confirmBtnText}>
+              {phase === 'classifying' ? '分類中...' : 'これでOK'}
+            </Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -428,5 +454,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#FFF',
     fontWeight: '500',
+  },
+  confirmBtnDisabled: {
+    opacity: 0.5,
   },
 });

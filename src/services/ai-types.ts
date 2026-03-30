@@ -4,11 +4,19 @@ export interface TaskItem {
   title: string;
 }
 
-/** ふるう結果 — ミハク候補とクモに分類 */
-export interface RefineResult {
+/** タスク抽出結果（Step 1: extract） */
+export interface ExtractResult {
+  tasks: TaskItem[];
+}
+
+/** タスク分類結果（Step 2: classify） */
+export interface ClassifyResult {
   mihaku: TaskItem[];
   kumo: TaskItem[];
 }
+
+/** ふるう結果 — 後方互換 (= ClassifyResult) */
+export type RefineResult = ClassifyResult;
 
 /** AI接続モード */
 export type AiMode = 'proxy' | 'api';
