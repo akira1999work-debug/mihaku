@@ -18,7 +18,7 @@ import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { TaskItem } from '../services/ai-types';
 import { saveUserProfile } from '../services/user-profile-store';
 
-type Step = 'intro' | 'hakidasu' | 'furuu' | 'profile' | 'sukuu' | 'kimeru' | 'done';
+type Step = 'intro' | 'hakidasu' | 'furuu_intro' | 'furuu' | 'sukuu' | 'kimeru' | 'done';
 
 interface OnboardingFlowProps {
   onComplete: (mihakuTitles: string[], kumoTitles: string[]) => void;
@@ -31,7 +31,6 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [mihaku, setMihaku] = useState<string[]>([]);
   const [kumo, setKumo] = useState<string[]>([]);
   const [userProfile, setUserProfile] = useState('');
-  const [profileInput, setProfileInput] = useState('');
   const speech = useSpeechInput();
 
   // --- イントロ ---
@@ -76,7 +75,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       const text = speech.transcript;
       if (text.trim()) {
         setRawText(text);
-        setStep('furuu');
+        setStep('furuu_intro');
       }
     };
 
@@ -84,7 +83,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       const text = textInput.trim();
       if (text) {
         setRawText(text);
-        setStep('furuu');
+        setStep('furuu_intro');
       }
     };
 
@@ -147,6 +146,44 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     );
   }
 
+  // --- ふるう前の説明 ---
+  if (step === 'furuu_intro') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.furuuIntroContent}>
+          <Text style={styles.stepTitle}>ふるう</Text>
+          <Text style={styles.furuuIntroText}>
+            出してくれたものを整理するね。
+          </Text>
+
+          <View style={styles.furuuExplainBox}>
+            <View style={styles.furuuExplainRow}>
+              <Text style={styles.furuuExplainLabel}>ミハク</Text>
+              <Text style={styles.furuuExplainDesc}>今日やりたいもの</Text>
+            </View>
+            <View style={styles.furuuExplainDivider} />
+            <View style={styles.furuuExplainRow}>
+              <Text style={styles.furuuExplainLabel}>クモ</Text>
+              <Text style={styles.furuuExplainDesc}>今じゃなくていいもの</Text>
+            </View>
+          </View>
+
+          <Text style={styles.furuuIntroHint}>
+            後から自由に動かせます
+          </Text>
+
+          <TouchableOpacity
+            style={styles.nextBtn}
+            onPress={() => setStep('furuu')}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.nextBtnText}>整理する</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
+
   // --- ふるう ---
   if (step === 'furuu') {
     return (
@@ -160,7 +197,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           onConfirm={(mihakuTitles, kumoTitles) => {
             setMihaku(mihakuTitles);
             setKumo(kumoTitles);
-            setStep('profile');
+            setStep('sukuu');
           }}
           onCancel={() => setStep('hakidasu')}
         />
@@ -168,71 +205,14 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
     );
   }
 
-  // --- 心春の自己紹介聞き取り ---
-  if (step === 'profile') {
-    const handleProfileSubmit = async () => {
-      const text = profileInput.trim();
-      if (text) {
-        setUserProfile(text);
-        await saveUserProfile(text);
-      }
-      setStep('sukuu');
-    };
-
-    return (
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      >
-        <View style={styles.profileContent}>
-          <Text style={styles.profileIcon}>🌸</Text>
-          <Text style={styles.profileName}>心春</Text>
-          <Text style={styles.profileQuestion}>
-            ちょっと聞いていい？{'\n'}
-            普段どんな生活してるの？
-          </Text>
-          <Text style={styles.profileHint}>
-            教えてくれると、5人があなたに合った{'\n'}
-            問いかけができるようになります
-          </Text>
-
-          <TextInput
-            style={styles.profileInput}
-            placeholder="例: 平日は9-18で会社員。夜に副業。水曜はジム..."
-            placeholderTextColor={colors.textSub}
-            value={profileInput}
-            onChangeText={setProfileInput}
-            multiline
-            numberOfLines={3}
-          />
-
-          <View style={styles.profileActions}>
-            <TouchableOpacity
-              style={styles.skipLink}
-              onPress={() => setStep('sukuu')}
-            >
-              <Text style={styles.skipLinkText}>スキップ</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.nextBtn, !profileInput.trim() && styles.nextBtnDisabled]}
-              onPress={handleProfileSubmit}
-              disabled={!profileInput.trim()}
-            >
-              <Text style={styles.nextBtnText}>伝える</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </KeyboardAvoidingView>
-    );
-  }
-
-  // --- すくう（5人会議） ---
+  // --- すくう（5人会議 — 初回は心春が自己紹介を聞く） ---
   if (step === 'sukuu') {
     const taskList = mihaku.map((t) => `・${t}`).join('\n');
-    const taskContext = mihaku.length > 0
-      ? `ミハク候補:\n${taskList}`
-      : '今日のタスクについて相談';
+    const kumoList = kumo.map((t) => `・${t}`).join('\n');
+    let taskContext = '';
+    if (mihaku.length > 0) taskContext += `ミハク候補:\n${taskList}\n\n`;
+    if (kumo.length > 0) taskContext += `クモ（今じゃなくていいもの）:\n${kumoList}\n\n`;
+    taskContext += '【初回】ユーザーはmihakuを初めて使っています。心春は議論の途中で自然に「ちょっと聞いていい？普段どんな生活してるの？」と自己紹介を聞いてください。';
 
     return (
       <View style={styles.container}>
@@ -432,70 +412,58 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
 
-  // --- きめる ---
-  // --- プロフィール ---
-  profileContent: {
+  // --- ふるう前説明 ---
+  furuuIntroContent: {
     flex: 1,
-    paddingHorizontal: 32,
-    paddingTop: 60,
+    justifyContent: 'center',
     alignItems: 'center',
+    paddingHorizontal: 40,
   },
-  profileIcon: {
-    fontSize: 32,
-    marginBottom: 8,
-  },
-  profileName: {
+  furuuIntroText: {
     fontSize: 16,
-    fontWeight: '500',
-    color: '#7a5d6b',
-    letterSpacing: 1,
-    marginBottom: 20,
-  },
-  profileQuestion: {
-    fontSize: 17,
     color: colors.text,
     textAlign: 'center',
     lineHeight: 28,
-    letterSpacing: 0.5,
-    marginBottom: 12,
+    marginBottom: 32,
   },
-  profileHint: {
-    fontSize: 13,
-    color: colors.textSub,
-    textAlign: 'center',
-    lineHeight: 22,
-    marginBottom: 28,
-  },
-  profileInput: {
+  furuuExplainBox: {
     width: '100%',
-    minHeight: 80,
     backgroundColor: colors.cardBg,
     borderRadius: 16,
-    padding: 16,
-    fontSize: 14,
-    color: colors.text,
-    textAlignVertical: 'top',
+    padding: 20,
     borderWidth: 1,
     borderColor: colors.divider,
-    marginBottom: 20,
+    marginBottom: 16,
   },
-  profileActions: {
+  furuuExplainRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 16,
+    gap: 12,
+    paddingVertical: 8,
   },
-  skipLink: {
-    paddingVertical: 12,
-    paddingHorizontal: 16,
+  furuuExplainLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: colors.sumiInk,
+    width: 60,
+    letterSpacing: 1,
   },
-  skipLinkText: {
+  furuuExplainDesc: {
     fontSize: 14,
     color: colors.textLight,
   },
-  nextBtnDisabled: {
-    backgroundColor: colors.ringUnfilled,
+  furuuExplainDivider: {
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: colors.divider,
+    marginVertical: 4,
+  },
+  furuuIntroHint: {
+    fontSize: 13,
+    color: colors.textSub,
+    marginBottom: 32,
   },
 
+  // --- きめる ---
   kimeruContent: {
     flex: 1,
     paddingHorizontal: 24,
