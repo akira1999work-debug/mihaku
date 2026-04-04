@@ -16,11 +16,12 @@ import { DEFAULT_AI_CONFIG } from '../services/ai-types';
 
 interface AiSettingsViewProps {
   onClose: () => void;
+  onResetOnboarding?: () => void;
 }
 
 type ConnStatus = 'idle' | 'testing' | 'ok' | 'error';
 
-export function AiSettingsView({ onClose }: AiSettingsViewProps) {
+export function AiSettingsView({ onClose, onResetOnboarding }: AiSettingsViewProps) {
   const [mode, setMode] = useState<AiMode>('proxy');
   const [proxyUrl, setProxyUrl] = useState(DEFAULT_AI_CONFIG.proxyUrl);
   const [apiKey, setApiKey] = useState('');
@@ -188,6 +189,16 @@ export function AiSettingsView({ onClose }: AiSettingsViewProps) {
           <Text style={styles.saveBtnText}>保存</Text>
         </TouchableOpacity>
       </View>
+
+      {/* 開発用: 初回体験リセット */}
+      {onResetOnboarding && (
+        <View style={styles.devSection}>
+          <Text style={styles.devLabel}>開発用</Text>
+          <TouchableOpacity style={styles.devBtn} onPress={onResetOnboarding}>
+            <Text style={styles.devBtnText}>初回体験をやり直す</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -356,5 +367,29 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#FFF',
     fontWeight: '500',
+  },
+  devSection: {
+    marginTop: 32,
+    paddingTop: 16,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.divider,
+  },
+  devLabel: {
+    fontSize: 11,
+    color: colors.textSub,
+    letterSpacing: 0.5,
+    marginBottom: 8,
+  },
+  devBtn: {
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.divider,
+    alignItems: 'center',
+  },
+  devBtnText: {
+    fontSize: 13,
+    color: colors.textLight,
   },
 });

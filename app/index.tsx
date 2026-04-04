@@ -15,8 +15,10 @@ import { VoiceChips } from '../src/components/VoiceChips';
 import { RefineView } from '../src/components/RefineView';
 import { AiSettingsView } from '../src/components/AiSettingsView';
 import { DailySetup } from '../src/components/DailySetup';
+import { OnboardingFlow } from '../src/components/OnboardingFlow';
 import { useSpeechInput } from '../src/hooks/useSpeechInput';
 import { useDailyReset } from '../src/hooks/useDailyReset';
+import { useOnboarding } from '../src/hooks/useOnboarding';
 import { splitChips } from '../src/utils/splitChips';
 import { colors } from '../src/theme';
 import { getDailyWord } from '../src/data/dailyWords';
@@ -36,6 +38,7 @@ export default function HomeScreen() {
   } = useTasks();
 
   const { resetDone, needsSetup, dismissSetup } = useDailyReset();
+  const onboarding = useOnboarding();
   const [showDailySetup, setShowDailySetup] = useState(false);
 
   const [tasks, setTasks] = useState<TaskWithSubs[]>([]);
@@ -214,12 +217,32 @@ export default function HomeScreen() {
     return 'ミハクが揃いました';
   })();
 
-  if (loading) {
+  if (loading || onboarding.loading) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.center}>
           <Text style={styles.loadingText}>...</Text>
         </View>
+      </SafeAreaView>
+    );
+  }
+
+  // 初回体験
+  if (!onboarding.completed) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <OnboardingFlow
+          onComplete={async (mihakuTitles, kumoTitles) => {
+            for (const title of mihakuTitles) {
+              await addTask(title, 'today');
+            }
+            for (const title of kumoTitles) {
+              await addTask(title, 'pool');
+            }
+            await onboarding.completeOnboarding();
+            await refresh();
+          }}
+        />
       </SafeAreaView>
     );
   }
@@ -232,7 +255,13 @@ export default function HomeScreen() {
           <Text style={styles.headerTitle}>mihaku</Text>
           <Text style={styles.headerSub}>設定</Text>
         </View>
-        <AiSettingsView onClose={() => setShowSettings(false)} />
+        <AiSettingsView
+          onClose={() => setShowSettings(false)}
+          onResetOnboarding={async () => {
+            await onboarding.resetOnboarding();
+            setShowSettings(false);
+          }}
+        />
       </SafeAreaView>
     );
   }
