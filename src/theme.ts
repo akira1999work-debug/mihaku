@@ -16,6 +16,10 @@ export const colors = {
   cardShadowDeep: 'rgba(0,0,0,0.04)',
   divider: '#ebe8e3',
   releaseAccent: '#C08040',
+  axisWork: '#b07060',
+  axisHealth: '#4a5440',
+  axisEnrichment: '#8a6d50',
+  axisRoutine: '#9e9890',
 } as const;
 
 export const fonts = {

@@ -169,6 +169,29 @@ const SYSTEM_EXTRACT = `あなたはタスク抽出AIです。ユーザーが音
 必ず以下のJSON形式のみで返すこと（説明文・コードブロック不要）:
 {"tasks":[{"title":"..."}]}`;
 
+const SYSTEM_EXTRACT_ONBOARDING = `あなたはタスク抽出・分類AIです。ユーザーのテキストからタスクを抽出し、重要度と軸を判定してください。
+
+ルール:
+1. 生テキストから意味のあるタスク・やることを抽出する
+2. 断片的・意味不明なものは除外する
+3. 各タスクを簡潔な行動文に整形する
+4. 各タスクにweightとaxisを付与する
+
+weight（重要度）:
+- intentional: 意志的に取り組むもの（仕事、勉強、運動、趣味、自己成長）
+- routine: 日常の雑務（掃除、買い物、散歩、料理など放っておいてもやるもの）
+
+axis（軸）:
+- work: 本業（仕事、勉強、家事育児など生活の中心）
+- health: 健康（運動、メンタルケア、通院など）
+- enrichment: 自分を豊かにすること（趣味、読書、自己成長、大切な人との時間）
+- routine: 日常の雑務（掃除、買い物、散歩など）
+
+intentionalを先に、routineを後に並べること。
+
+必ず以下のJSON形式のみで返すこと（説明文・コードブロック不要）:
+{"tasks":[{"title":"...","weight":"intentional","axis":"work"}]}`;
+
 const SYSTEM_CLASSIFY = `あなたはタスク分類AIです。タスクリストを2つのグループに分類してください。
 
 分類基準:
@@ -183,22 +206,22 @@ const SYSTEM_MEETING = `あなたはmihakuアプリの5人会議AIです。ユ�
 ## キャラクター（この順で発言を生成すること）
 
 1. **理央（りお）** — お姉さんの提案者。選択肢を広げる。構造化が得意。丁寧だけど敬語ではない。
-   口調例: 「全部じゃなくて、一部だけやるのはどうかな」「こうしてみたら面白くない？」
+   口調例: 「一部だけやるのはどうかな」「こうしてみるのはどうですか？」
 
 2. **悠真（ゆうま）** — 包容力の安心役。長期視点。緊急性バイアスへのブレーキ。敬語固定。穏やか。
    口調例: 「焦らなくていいですよ。ゆっくり考えましょう」「1ヶ月後に振り返ったら、どう見えるかな」
    → 理央の提案に対して、長期的な視点から応答すること。
 
 3. **心春（こはる）** — 癒しの本音引き出し。意見ではなく問いを投げる。柔らかい普通の話し方。
-   口調例: 「ねぇ、それほんとにやりたいやつ？」「それ選んだ時、どんな気持ちだった？」
+   口調例: 「それは、やりたくてやるものですか？」「それ選んだ時、どんな気持ちだった？」
    → 理央・悠真の論理的な議論に対して、感情面から切り込むこと。
 
 4. **陽斗（はると）** — ムードメーカー。ユーザーの気持ちを代弁。フランク。一人称「俺」。
-   口調例: 「俺だったらこれ後回しにするわ」「ぶっちゃけめんどくない？」
+   口調例: 「自分だったら後回しにするかもしれないな」「それ面倒じゃないかな」
    → 心春の問いかけを踏まえて、より直球でユーザーの本音を代弁すること。
 
 5. **凛（りん）** — クーデレの反論者。短く無駄がない。
-   口調例: 「待って。本当にそれでいい？」「...正しい判断。」
+   口調例: 「少し待ってください。本当にそれでいいですか」「...正しい判断だと思う。」
    → 前4人の発言から1つ以上を具体的に引用し、以下のいずれかの形で反論する:
      - 「○○が〜と言ったけど、[反証]」
      - 「全員〜だけど、[見落とし]」
@@ -359,6 +382,47 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify(parsed));
     } catch (err) {
       console.error('[classify] error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── Extract Onboarding（初回体験用・weight+axis付き） ─
+  if (req.method === 'POST' && req.url === '/api/extract-onboarding') {
+    const rateCheck = checkThrottle();
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: rateCheck.reason }));
+      return;
+    }
+
+    try {
+      const body = JSON.parse(await readBody(req));
+      const rawText = body.text;
+
+      if (!rawText || typeof rawText !== 'string') {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'text field is required' }));
+        return;
+      }
+
+      console.log(`[extract-onboarding] input: "${rawText.slice(0, 80)}..."`);
+      recordRequest();
+
+      const raw = await callClaude(
+        `以下のテキストからタスクを抽出・分類してください:\n「${rawText}」`,
+        MODEL_QUALITY,
+        SYSTEM_EXTRACT_ONBOARDING,
+      );
+      const parsed = parseJsonResponse(raw);
+
+      console.log(`[extract-onboarding] tasks: ${parsed.tasks?.length ?? 0}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(parsed));
+    } catch (err) {
+      console.error('[extract-onboarding] error:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }

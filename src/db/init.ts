@@ -12,6 +12,7 @@ export async function initDatabase(db: SQLiteDatabase) {
       released_at TEXT,
       selected_date TEXT,
       time_slot TEXT NOT NULL DEFAULT 'unset',
+      axis TEXT NOT NULL DEFAULT 'work',
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 
@@ -66,12 +67,12 @@ export async function initDatabase(db: SQLiteDatabase) {
     );
   `);
 
-  // マイグレーション: 既存DBに time_slot カラムがない場合追加
-  try {
-    await db.execAsync(
-      `ALTER TABLE tasks ADD COLUMN time_slot TEXT NOT NULL DEFAULT 'unset'`
-    );
-  } catch {
-    // カラムが既に存在する場合はエラーになるが無視
+  // マイグレーション
+  const migrations = [
+    `ALTER TABLE tasks ADD COLUMN time_slot TEXT NOT NULL DEFAULT 'unset'`,
+    `ALTER TABLE tasks ADD COLUMN axis TEXT NOT NULL DEFAULT 'work'`,
+  ];
+  for (const sql of migrations) {
+    try { await db.execAsync(sql); } catch { /* カラム既存なら無視 */ }
   }
 }

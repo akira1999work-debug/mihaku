@@ -1,5 +1,6 @@
 export type TaskStatus = 'pool' | 'today' | 'completed' | 'released';
 export type TimeSlot = 'morning' | 'afternoon' | 'evening' | 'unset';
+export type TaskAxis = 'work' | 'health' | 'enrichment' | 'routine';
 
 export interface SubTask {
   id: number;
@@ -19,6 +20,7 @@ export interface Task {
   released_at: string | null;
   selected_date: string | null;
   time_slot: TimeSlot;
+  axis: TaskAxis;
   sort_order: number;
 }
 

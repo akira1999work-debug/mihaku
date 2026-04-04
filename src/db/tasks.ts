@@ -45,15 +45,15 @@ export function useTasks() {
     );
   }, [db]);
 
-  const addTask = useCallback(async (title: string, status: TaskStatus = 'today'): Promise<void> => {
+  const addTask = useCallback(async (title: string, status: TaskStatus = 'today', axis: string = 'work'): Promise<void> => {
     const date = status === 'today' ? todayString() : null;
     const maxOrder = await db.getFirstAsync<{ m: number }>(
       `SELECT COALESCE(MAX(sort_order), 0) as m FROM tasks WHERE status = 'today' AND selected_date = ?`,
       [todayString()]
     );
     await db.runAsync(
-      `INSERT INTO tasks (title, status, selected_date, sort_order) VALUES (?, ?, ?, ?)`,
-      [title, status, date, (maxOrder?.m ?? 0) + 1]
+      `INSERT INTO tasks (title, status, selected_date, axis, sort_order) VALUES (?, ?, ?, ?, ?)`,
+      [title, status, date, axis, (maxOrder?.m ?? 0) + 1]
     );
   }, [db]);
 

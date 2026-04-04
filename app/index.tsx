@@ -240,6 +240,8 @@ export default function HomeScreen() {
     return 'ミハクが揃いました';
   })();
 
+  console.log('[home] loading:', loading, 'onboarding.loading:', onboarding.loading, 'onboarding.completed:', onboarding.completed);
+
   if (loading || onboarding.loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -255,12 +257,12 @@ export default function HomeScreen() {
     return (
       <SafeAreaView style={styles.container}>
         <OnboardingFlow
-          onComplete={async (mihakuTitles, kumoTitles) => {
-            for (const title of mihakuTitles) {
-              await addTask(title, 'today');
+          onComplete={async (mihaku, kumo) => {
+            for (const t of mihaku) {
+              await addTask(t.title, 'today', t.axis);
             }
-            for (const title of kumoTitles) {
-              await addTask(title, 'pool');
+            for (const t of kumo) {
+              await addTask(t.title, 'pool', t.axis);
             }
             await onboarding.completeOnboarding();
             await refresh();

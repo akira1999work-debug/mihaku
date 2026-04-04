@@ -37,17 +37,24 @@ export function useOnboarding() {
 
   useEffect(() => {
     getFlag().then((v) => {
+      console.log('[onboarding] flag loaded:', v);
       setCompleted(v);
+      setLoading(false);
+    }).catch((e) => {
+      console.error('[onboarding] flag load error:', e);
+      setCompleted(false);
       setLoading(false);
     });
   }, []);
 
   const completeOnboarding = useCallback(async () => {
+    console.log('[onboarding] completing');
     await setFlag(true);
     setCompleted(true);
   }, []);
 
   const resetOnboarding = useCallback(async () => {
+    console.log('[onboarding] resetting');
     await setFlag(false);
     setCompleted(false);
   }, []);

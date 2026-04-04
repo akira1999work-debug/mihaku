@@ -63,6 +63,7 @@ export function useMemoryTasks() {
       released_at: null,
       selected_date: date,
       time_slot: 'unset',
+      axis: 'work',
       sort_order: maxOrder + 1,
     });
   }, []);

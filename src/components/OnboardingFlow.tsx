@@ -1,521 +1,467 @@
 /**
- * 初回体験フロー
+ * 初回体験フロー — 心春ガイド型チャット
  *
- * はきだす → ふるう → すくう（5人会議）→ きめる → ホーム
- * 既存コンポーネントを順に表示するコンテナ。
+ * 心春がLINE風チャットでガイドしながら、ユーザーのタスクを引き出す。
+ * AI分類は裏で行い、心春の問いかけでユーザー自身が選ぶ。
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import {
-  View, Text, TouchableOpacity, TextInput,
-  StyleSheet, KeyboardAvoidingView, Platform,
+  View, Text, TextInput, TouchableOpacity,
+  ScrollView, StyleSheet, KeyboardAvoidingView,
+  Platform, Animated,
 } from 'react-native';
 import { colors } from '../theme';
-import { VoiceOverlay } from './VoiceOverlay';
-import { RefineView } from './RefineView';
-import { MeetingView } from './MeetingView';
-import { useSpeechInput } from '../hooks/useSpeechInput';
-import type { TaskItem } from '../services/ai-types';
-import { saveUserProfile } from '../services/user-profile-store';
+import { extractTasks } from '../services/ai';
+import { loadAiConfig } from '../services/ai-config-store';
+import type { TaskAxis } from '../types/task';
 
-type Step = 'intro' | 'hakidasu' | 'furuu_intro' | 'furuu' | 'sukuu' | 'kimeru' | 'done';
+// ── 型定義 ──────────────────────────────────────
+
+interface ExtractedTask {
+  title: string;
+  weight: 'intentional' | 'routine';
+  axis: TaskAxis;
+}
+
+type ChatEntry =
+  | { type: 'koharu'; text: string }
+  | { type: 'user'; text: string }
+  | { type: 'task_list'; tasks: ExtractedTask[]; selectable: boolean }
+  | { type: 'input'; mode: 'initial' | 'additional' };
+
+type Phase = 'greeting' | 'input' | 'extracted' | 'balance_check' | 'select' | 'done';
 
 interface OnboardingFlowProps {
-  onComplete: (mihakuTitles: string[], kumoTitles: string[]) => void;
+  onComplete: (mihaku: ExtractedTask[], kumo: ExtractedTask[]) => void;
 }
+
+// ── 軸カラー ────────────────────────────────────
+
+const AXIS_COLORS: Record<TaskAxis, string> = {
+  work: colors.axisWork,
+  health: colors.axisHealth,
+  enrichment: colors.axisEnrichment,
+  routine: colors.axisRoutine,
+};
+
+// ── 心春バブル ──────────────────────────────────
+
+function KoharuBubble({ text }: { text: string }) {
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fadeAnim, { toValue: 1, duration: 400, useNativeDriver: true }).start();
+  }, [fadeAnim]);
+
+  return (
+    <Animated.View style={[bubbleStyles.koharuContainer, { opacity: fadeAnim }]}>
+      <View style={bubbleStyles.koharuHeader}>
+        <Text style={bubbleStyles.koharuIcon}>🌸</Text>
+        <Text style={bubbleStyles.koharuName}>心春</Text>
+      </View>
+      <View style={bubbleStyles.koharuBody}>
+        <Text style={bubbleStyles.koharuText}>{text}</Text>
+      </View>
+    </Animated.View>
+  );
+}
+
+function UserBubble({ text }: { text: string }) {
+  return (
+    <View style={bubbleStyles.userContainer}>
+      <View style={bubbleStyles.userBody}>
+        <Text style={bubbleStyles.userText}>{text}</Text>
+      </View>
+    </View>
+  );
+}
+
+// ── タスクリスト表示 ────────────────────────────
+
+function TaskListView({ tasks, selectable, selectedIds, onToggle }: {
+  tasks: ExtractedTask[];
+  selectable: boolean;
+  selectedIds: Set<number>;
+  onToggle: (index: number) => void;
+}) {
+  const intentional = tasks.filter((t) => t.weight === 'intentional');
+  const routine = tasks.filter((t) => t.weight === 'routine');
+
+  const renderTask = (task: ExtractedTask, globalIndex: number) => {
+    const selected = selectedIds.has(globalIndex);
+    return (
+      <TouchableOpacity
+        key={globalIndex}
+        style={[
+          taskStyles.card,
+          { borderLeftColor: AXIS_COLORS[task.axis] },
+          selectable && selected && taskStyles.cardSelected,
+        ]}
+        onPress={() => selectable && onToggle(globalIndex)}
+        activeOpacity={selectable ? 0.7 : 1}
+        disabled={!selectable}
+      >
+        {selectable && (
+          <View style={[taskStyles.checkbox, selected && taskStyles.checkboxChecked]}>
+            {selected && <Text style={taskStyles.checkmark}>✓</Text>}
+          </View>
+        )}
+        <Text style={taskStyles.title}>{task.title}</Text>
+      </TouchableOpacity>
+    );
+  };
+
+  // globalIndexを計算
+  let idx = 0;
+  return (
+    <View style={taskStyles.container}>
+      {intentional.map((t) => {
+        const gi = tasks.indexOf(t);
+        return renderTask(t, gi);
+      })}
+      {routine.length > 0 && intentional.length > 0 && (
+        <View style={taskStyles.divider} />
+      )}
+      {routine.map((t) => {
+        const gi = tasks.indexOf(t);
+        return renderTask(t, gi);
+      })}
+    </View>
+  );
+}
+
+// ── メインコンポーネント ────────────────────────
 
 export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
-  const [step, setStep] = useState<Step>('intro');
-  const [rawText, setRawText] = useState('');
-  const [textInput, setTextInput] = useState('');
-  const [mihaku, setMihaku] = useState<string[]>([]);
-  const [kumo, setKumo] = useState<string[]>([]);
-  const [userProfile, setUserProfile] = useState('');
-  const speech = useSpeechInput();
+  const [entries, setEntries] = useState<ChatEntry[]>([]);
+  const [phase, setPhase] = useState<Phase>('greeting');
+  const [input, setInput] = useState('');
+  const [tasks, setTasks] = useState<ExtractedTask[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
 
-  // --- イントロ ---
-  if (step === 'intro') {
-    return (
-      <View style={styles.container}>
-        <View style={styles.introContent}>
-          <Text style={styles.introTitle}>mihaku</Text>
-          <Text style={styles.introSubtitle}>3つの余白</Text>
+  const scrollToBottom = useCallback(() => {
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 150);
+  }, []);
 
-          <View style={styles.introTextBlock}>
-            <Text style={styles.introText}>
-              頭の中にあること、{'\n'}
-              全部出してみてください。
-            </Text>
-            <Text style={styles.introTextSub}>
-              やること、気になってること、{'\n'}
-              なんでも大丈夫です。
-            </Text>
-            <Text style={styles.introTextSub}>
-              その中から、今日のあなたにとって{'\n'}
-              大切なものを一緒に見つけましょう。
-            </Text>
-          </View>
+  const addKoharu = useCallback((text: string) => {
+    setEntries((prev) => [...prev, { type: 'koharu', text }]);
+    scrollToBottom();
+  }, [scrollToBottom]);
 
-          <TouchableOpacity
-            style={styles.introBtn}
-            onPress={() => setStep('hakidasu')}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.introBtnText}>はじめる</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
+  const addKoharuDelayed = useCallback(async (texts: string[], delayMs = 800) => {
+    for (const text of texts) {
+      await new Promise((r) => setTimeout(r, delayMs));
+      setEntries((prev) => [...prev, { type: 'koharu', text }]);
+      scrollToBottom();
+    }
+  }, [scrollToBottom]);
 
-  // --- はきだす ---
-  if (step === 'hakidasu') {
-    const handleVoiceStop = () => {
-      speech.stop();
-      const text = speech.transcript;
-      if (text.trim()) {
-        setRawText(text);
-        setStep('furuu_intro');
+  // 挨拶シーケンス
+  useEffect(() => {
+    if (phase !== 'greeting') return;
+    (async () => {
+      await addKoharuDelayed([
+        'はじめまして、心春といいます',
+        'このアプリ、やることを増やすアプリじゃないんです',
+        '逆で、減らします。毎日、自分がやりたいことを3つだけ選ぶ。それだけ',
+      ]);
+      await new Promise((r) => setTimeout(r, 600));
+      await addKoharuDelayed([
+        'まず聞かせてください',
+        'いま頭の中にあること、なんでも。やりたいこと、やらなきゃと思ってること',
+      ]);
+      setEntries((prev) => [...prev, { type: 'input', mode: 'initial' }]);
+      setPhase('input');
+      scrollToBottom();
+    })();
+  }, [phase]);
+
+  // ユーザー入力送信
+  const handleSend = async () => {
+    const text = input.trim();
+    if (!text || loading) return;
+    setInput('');
+    setEntries((prev) => prev.filter((e) => e.type !== 'input'));
+    setEntries((prev) => [...prev, { type: 'user', text }]);
+    scrollToBottom();
+
+    setLoading(true);
+    try {
+      const config = await loadAiConfig();
+      const response = await fetch(
+        `${config.proxyUrl.replace(/\/+$/, '')}/api/extract-onboarding`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text }),
+        },
+      );
+
+      if (!response.ok) {
+        // フォールバック: 通常のextract
+        const extracted = await extractTasks(text, config);
+        const fallbackTasks: ExtractedTask[] = (extracted.tasks ?? []).map((t) => ({
+          title: t.title,
+          weight: 'intentional' as const,
+          axis: 'work' as TaskAxis,
+        }));
+        setTasks((prev) => [...prev, ...fallbackTasks]);
+        await showExtractedResult([...tasks, ...fallbackTasks]);
+      } else {
+        const data = await response.json();
+        const newTasks: ExtractedTask[] = (data.tasks ?? []).map((t: { title: string; weight?: string; axis?: string }) => ({
+          title: t.title,
+          weight: t.weight === 'routine' ? 'routine' : 'intentional',
+          axis: (['work', 'health', 'enrichment', 'routine'].includes(t.axis ?? '') ? t.axis : 'work') as TaskAxis,
+        }));
+        const allTasks = [...tasks, ...newTasks];
+        setTasks(allTasks);
+        await showExtractedResult(allTasks);
       }
-    };
+    } catch {
+      addKoharu('うまく聞き取れなかったかも。もう一度教えてもらえますか？');
+      setEntries((prev) => [...prev, { type: 'input', mode: 'initial' }]);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const handleTextSubmit = () => {
-      const text = textInput.trim();
-      if (text) {
-        setRawText(text);
-        setStep('furuu_intro');
+  const showExtractedResult = async (allTasks: ExtractedTask[]) => {
+    await addKoharuDelayed(['整理してみました']);
+    setEntries((prev) => [...prev, { type: 'task_list', tasks: allTasks, selectable: false }]);
+    scrollToBottom();
+    await new Promise((r) => setTimeout(r, 500));
+    addKoharu('他にもあったら追加してください');
+    setEntries((prev) => [...prev, { type: 'input', mode: 'additional' }]);
+    setPhase('extracted');
+    scrollToBottom();
+  };
+
+  // 「これで全部」
+  const handleDoneInput = async () => {
+    setEntries((prev) => prev.filter((e) => e.type !== 'input'));
+
+    // バランスチェック: 軸の偏りを確認
+    const axes = tasks.filter((t) => t.weight === 'intentional').map((t) => t.axis);
+    const hasHealth = axes.includes('health');
+    const hasEnrichment = axes.includes('enrichment');
+    const workCount = axes.filter((a) => a === 'work').length;
+
+    if (workCount >= 2 && !hasHealth && !hasEnrichment) {
+      await addKoharuDelayed([
+        '仕事のことが多いみたいだけど、自分のための時間、入れなくて大丈夫ですか？',
+        'たとえば運動とか、読みたかった本とか、会いたい人とか...',
+      ]);
+      setEntries((prev) => [...prev, { type: 'input', mode: 'additional' }]);
+      setPhase('balance_check');
+      scrollToBottom();
+      return;
+    }
+
+    await moveToSelect();
+  };
+
+  // 選択フェーズへ
+  const moveToSelect = async () => {
+    setEntries((prev) => prev.filter((e) => e.type !== 'input'));
+    await addKoharuDelayed([
+      'この中で3つだけしかできないとしたら、どれを選びますか？',
+    ]);
+    // タスクリストを選択可能モードで再表示
+    setEntries((prev) => {
+      const withoutOldList = prev.filter((e) => e.type !== 'task_list');
+      return [...withoutOldList, { type: 'task_list', tasks, selectable: true }];
+    });
+    setPhase('select');
+    scrollToBottom();
+  };
+
+  // バランスチェック後の「これで全部」
+  const handleBalanceDone = async () => {
+    await moveToSelect();
+  };
+
+  // タスク選択トグル
+  const handleToggleTask = (index: number) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else if (next.size < 3) {
+        next.add(index);
       }
-    };
+      return next;
+    });
+  };
 
-    return (
-      <KeyboardAvoidingView
-        style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+  // 確定
+  const handleConfirm = async () => {
+    const mihaku = tasks.filter((_, i) => selectedIds.has(i));
+    const kumo = tasks.filter((_, i) => !selectedIds.has(i));
+    addKoharu('いいね。今日はこの3つ');
+    await new Promise((r) => setTimeout(r, 800));
+    onComplete(mihaku, kumo);
+  };
+
+  return (
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+    >
+      <ScrollView
+        ref={scrollRef}
+        style={styles.chatArea}
+        contentContainerStyle={styles.chatContent}
+        onContentSizeChange={scrollToBottom}
       >
-        <View style={styles.hakidasuContent}>
-          <Text style={styles.stepTitle}>はきだす</Text>
-          <Text style={styles.stepDesc}>
-            頭の中にあること、全部出してみて。{'\n'}
-            タップして話すか、テキストで入力できます。
-          </Text>
+        {entries.map((entry, i) => {
+          if (entry.type === 'koharu') return <KoharuBubble key={i} text={entry.text} />;
+          if (entry.type === 'user') return <UserBubble key={i} text={entry.text} />;
+          if (entry.type === 'task_list') {
+            return (
+              <TaskListView
+                key={`tasklist-${i}`}
+                tasks={entry.tasks}
+                selectable={entry.selectable}
+                selectedIds={selectedIds}
+                onToggle={handleToggleTask}
+              />
+            );
+          }
+          return null;
+        })}
 
-          <TouchableOpacity
-            style={styles.micBtnLarge}
-            onPress={async () => {
-              await speech.start();
-            }}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.micBtnIcon}>🎙️</Text>
-            <Text style={styles.micBtnLabel}>タップして話す</Text>
-          </TouchableOpacity>
+        {loading && (
+          <View style={styles.typingIndicator}>
+            <Text style={styles.typingDots}>...</Text>
+          </View>
+        )}
+      </ScrollView>
 
-          <Text style={styles.orText}>または</Text>
-
+      {/* 入力エリア */}
+      {(phase === 'input' || phase === 'extracted' || phase === 'balance_check') && (
+        <View style={styles.inputArea}>
           <TextInput
-            style={styles.textArea}
-            placeholder="ここに書き出す..."
+            style={styles.input}
+            placeholder="ここに入力..."
             placeholderTextColor={colors.textSub}
-            value={textInput}
-            onChangeText={setTextInput}
+            value={input}
+            onChangeText={setInput}
+            onSubmitEditing={handleSend}
+            returnKeyType="send"
+            editable={!loading}
             multiline
-            numberOfLines={4}
           />
-
-          {textInput.trim().length > 0 && (
-            <TouchableOpacity
-              style={styles.nextBtn}
-              onPress={handleTextSubmit}
-            >
-              <Text style={styles.nextBtnText}>これで全部</Text>
+          {input.trim() ? (
+            <TouchableOpacity style={styles.sendBtn} onPress={handleSend} disabled={loading}>
+              <Text style={styles.sendBtnText}>↑</Text>
             </TouchableOpacity>
-          )}
+          ) : (phase === 'extracted' || phase === 'balance_check') ? (
+            <TouchableOpacity
+              style={styles.doneBtn}
+              onPress={phase === 'balance_check' ? handleBalanceDone : handleDoneInput}
+            >
+              <Text style={styles.doneBtnText}>これで全部</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
+      )}
 
-        <VoiceOverlay
-          visible={speech.isListening}
-          transcript={speech.transcript}
-          isListening={speech.isListening}
-          onStop={handleVoiceStop}
-          onCancel={() => {
-            speech.stop();
-            speech.clear();
-          }}
-        />
-      </KeyboardAvoidingView>
-    );
-  }
-
-  // --- ふるう前の説明 ---
-  if (step === 'furuu_intro') {
-    return (
-      <View style={styles.container}>
-        <View style={styles.furuuIntroContent}>
-          <Text style={styles.stepTitle}>ふるう</Text>
-          <Text style={styles.furuuIntroText}>
-            出してくれたものを整理するね。
-          </Text>
-
-          <View style={styles.furuuExplainBox}>
-            <View style={styles.furuuExplainRow}>
-              <Text style={styles.furuuExplainLabel}>ミハク</Text>
-              <Text style={styles.furuuExplainDesc}>今日やりたいもの</Text>
-            </View>
-            <View style={styles.furuuExplainDivider} />
-            <View style={styles.furuuExplainRow}>
-              <Text style={styles.furuuExplainLabel}>クモ</Text>
-              <Text style={styles.furuuExplainDesc}>今じゃなくていいもの</Text>
-            </View>
-          </View>
-
-          <Text style={styles.furuuIntroHint}>
-            後から自由に動かせます
-          </Text>
-
+      {/* 選択確定ボタン */}
+      {phase === 'select' && (
+        <View style={styles.inputArea}>
           <TouchableOpacity
-            style={styles.nextBtn}
-            onPress={() => setStep('furuu')}
-            activeOpacity={0.7}
+            style={[styles.confirmBtn, selectedIds.size === 0 && styles.confirmBtnDisabled]}
+            onPress={handleConfirm}
+            disabled={selectedIds.size === 0}
           >
-            <Text style={styles.nextBtnText}>整理する</Text>
+            <Text style={styles.confirmBtnText}>
+              {selectedIds.size === 0 ? 'タップして選んでください' : `この${selectedIds.size}つでいく`}
+            </Text>
           </TouchableOpacity>
         </View>
-      </View>
-    );
-  }
-
-  // --- ふるう ---
-  if (step === 'furuu') {
-    return (
-      <View style={styles.container}>
-        <View style={styles.stepHeader}>
-          <Text style={styles.stepTitle}>ふるう</Text>
-          <Text style={styles.stepDesc}>AIがタスクを整理しています</Text>
-        </View>
-        <RefineView
-          rawText={rawText}
-          onConfirm={(mihakuTitles, kumoTitles) => {
-            setMihaku(mihakuTitles);
-            setKumo(kumoTitles);
-            setStep('sukuu');
-          }}
-          onCancel={() => setStep('hakidasu')}
-        />
-      </View>
-    );
-  }
-
-  // --- すくう（5人会議 — 初回は心春が自己紹介を聞く） ---
-  if (step === 'sukuu') {
-    const taskList = mihaku.map((t) => `・${t}`).join('\n');
-    const kumoList = kumo.map((t) => `・${t}`).join('\n');
-    let taskContext = '';
-    if (mihaku.length > 0) taskContext += `ミハク候補:\n${taskList}\n\n`;
-    if (kumo.length > 0) taskContext += `クモ（今じゃなくていいもの）:\n${kumoList}\n\n`;
-    taskContext += '【初回】ユーザーはmihakuを初めて使っています。心春は議論の途中で自然に「ちょっと聞いていい？普段どんな生活してるの？」と自己紹介を聞いてください。';
-
-    return (
-      <View style={styles.container}>
-        <MeetingView
-          taskContext={taskContext}
-          phase="sukuu"
-          userProfile={userProfile || undefined}
-          onClose={() => setStep('kimeru')}
-        />
-      </View>
-    );
-  }
-
-  // --- きめる ---
-  if (step === 'kimeru') {
-    return (
-      <View style={styles.container}>
-        <View style={styles.kimeruContent}>
-          <Text style={styles.stepTitle}>きめる</Text>
-          <Text style={styles.stepDesc}>
-            今日のミハクが決まりました
-          </Text>
-
-          <View style={styles.kimeruList}>
-            {mihaku.map((title, i) => (
-              <View key={i} style={styles.kimeruCard}>
-                <Text style={styles.kimeruCardText}>{title}</Text>
-              </View>
-            ))}
-          </View>
-
-          {kumo.length > 0 && (
-            <View style={styles.kumoSection}>
-              <Text style={styles.kumoLabel}>
-                クモ（ストックに保存されます）
-              </Text>
-              {kumo.map((title, i) => (
-                <Text key={i} style={styles.kumoItem}>・{title}</Text>
-              ))}
-            </View>
-          )}
-
-          <TouchableOpacity
-            style={styles.completeBtn}
-            onPress={() => onComplete(mihaku, kumo)}
-            activeOpacity={0.7}
-          >
-            <Text style={styles.completeBtnText}>はじめよう</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
-
-  return null;
+      )}
+    </KeyboardAvoidingView>
+  );
 }
 
+// ── スタイル ────────────────────────────────────
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.bg,
-  },
-
-  // --- イントロ ---
-  introContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
-  },
-  introTitle: {
-    fontSize: 32,
-    fontWeight: '200',
-    color: colors.sumiInk,
-    letterSpacing: 6,
-    marginBottom: 8,
-  },
-  introSubtitle: {
-    fontSize: 14,
-    color: colors.textLight,
-    letterSpacing: 2,
-    marginBottom: 48,
-  },
-  introTextBlock: {
-    alignItems: 'center',
-    gap: 16,
-    marginBottom: 48,
-  },
-  introText: {
-    fontSize: 16,
-    color: colors.text,
-    textAlign: 'center',
-    lineHeight: 28,
-    letterSpacing: 0.5,
-  },
-  introTextSub: {
-    fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center',
-    lineHeight: 24,
-    letterSpacing: 0.3,
-  },
-  introBtn: {
-    backgroundColor: colors.sumiInk,
-    borderRadius: 28,
-    paddingVertical: 16,
-    paddingHorizontal: 48,
-  },
-  introBtnText: {
-    fontSize: 15,
-    color: '#FFF',
-    fontWeight: '500',
-    letterSpacing: 1,
-  },
-
-  // --- はきだす ---
-  hakidasuContent: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 40,
-    alignItems: 'center',
-  },
-  stepHeader: {
-    paddingHorizontal: 24,
-    paddingTop: 20,
-    paddingBottom: 12,
-  },
-  stepTitle: {
-    fontSize: 20,
-    fontWeight: '400',
-    color: colors.text,
-    letterSpacing: 2,
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  stepDesc: {
-    fontSize: 14,
-    color: colors.textLight,
-    textAlign: 'center',
-    lineHeight: 22,
-    letterSpacing: 0.3,
-  },
-  micBtnLarge: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
+  container: { flex: 1, backgroundColor: colors.bg },
+  chatArea: { flex: 1 },
+  chatContent: { paddingHorizontal: 20, paddingVertical: 24, gap: 12 },
+  inputArea: {
+    flexDirection: 'row', alignItems: 'flex-end',
+    paddingHorizontal: 16, paddingVertical: 12,
+    borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.divider,
     backgroundColor: colors.cardBg,
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: colors.divider,
-    shadowColor: '#d4a574',
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
-    elevation: 4,
-    marginTop: 40,
-    marginBottom: 16,
   },
-  micBtnIcon: {
-    fontSize: 40,
-    marginBottom: 4,
+  input: {
+    flex: 1, fontSize: 14, paddingVertical: 10, paddingHorizontal: 16,
+    backgroundColor: '#f8f7f5', borderRadius: 20, color: colors.text, maxHeight: 100,
   },
-  micBtnLabel: {
-    fontSize: 11,
-    color: colors.textSub,
-    letterSpacing: 0.3,
+  sendBtn: {
+    width: 36, height: 36, borderRadius: 18, backgroundColor: colors.sumiInk,
+    justifyContent: 'center', alignItems: 'center', marginLeft: 8,
   },
-  orText: {
-    fontSize: 13,
-    color: colors.textSub,
-    marginVertical: 16,
+  sendBtnText: { fontSize: 18, color: '#FFF', fontWeight: '600' },
+  doneBtn: {
+    paddingHorizontal: 16, paddingVertical: 10, borderRadius: 18,
+    backgroundColor: colors.sumiInk, marginLeft: 8,
   },
-  textArea: {
-    width: '100%',
-    minHeight: 100,
-    backgroundColor: colors.cardBg,
-    borderRadius: 16,
-    padding: 16,
-    fontSize: 14,
-    color: colors.text,
-    textAlignVertical: 'top',
-    borderWidth: 1,
-    borderColor: colors.divider,
+  doneBtnText: { fontSize: 13, color: '#FFF', fontWeight: '500' },
+  confirmBtn: {
+    flex: 1, backgroundColor: colors.sumiInk, borderRadius: 24,
+    paddingVertical: 14, alignItems: 'center',
   },
-  nextBtn: {
-    backgroundColor: colors.sumiInk,
-    borderRadius: 24,
-    paddingVertical: 14,
-    paddingHorizontal: 32,
-    marginTop: 20,
-  },
-  nextBtnText: {
-    fontSize: 14,
-    color: '#FFF',
-    fontWeight: '500',
-    letterSpacing: 0.5,
-  },
+  confirmBtnDisabled: { backgroundColor: colors.ringUnfilled },
+  confirmBtnText: { fontSize: 14, color: '#FFF', fontWeight: '500', letterSpacing: 0.5 },
+  typingIndicator: { paddingLeft: 40, paddingVertical: 8 },
+  typingDots: { fontSize: 24, color: colors.textSub, letterSpacing: 4 },
+});
 
-  // --- ふるう前説明 ---
-  furuuIntroContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingHorizontal: 40,
+const bubbleStyles = StyleSheet.create({
+  koharuContainer: { marginBottom: 2 },
+  koharuHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 4, gap: 6 },
+  koharuIcon: { fontSize: 14 },
+  koharuName: { fontSize: 12, fontWeight: '600', color: '#7a5d6b', letterSpacing: 0.5 },
+  koharuBody: {
+    backgroundColor: colors.cardBg, borderRadius: 16, borderTopLeftRadius: 4,
+    paddingHorizontal: 14, paddingVertical: 10, maxWidth: '85%',
+    shadowColor: colors.cardShadow, shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 1, shadowRadius: 3, elevation: 1,
   },
-  furuuIntroText: {
-    fontSize: 16,
-    color: colors.text,
-    textAlign: 'center',
-    lineHeight: 28,
-    marginBottom: 32,
+  koharuText: { fontSize: 14, color: colors.text, lineHeight: 24 },
+  userContainer: { alignItems: 'flex-end' },
+  userBody: {
+    backgroundColor: colors.sumiInk, borderRadius: 16, borderTopRightRadius: 4,
+    paddingHorizontal: 14, paddingVertical: 10, maxWidth: '75%',
   },
-  furuuExplainBox: {
-    width: '100%',
-    backgroundColor: colors.cardBg,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: colors.divider,
-    marginBottom: 16,
-  },
-  furuuExplainRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingVertical: 8,
-  },
-  furuuExplainLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.sumiInk,
-    width: 60,
-    letterSpacing: 1,
-  },
-  furuuExplainDesc: {
-    fontSize: 14,
-    color: colors.textLight,
-  },
-  furuuExplainDivider: {
-    height: StyleSheet.hairlineWidth,
-    backgroundColor: colors.divider,
-    marginVertical: 4,
-  },
-  furuuIntroHint: {
-    fontSize: 13,
-    color: colors.textSub,
-    marginBottom: 32,
-  },
+  userText: { fontSize: 14, color: '#FFFFFF', lineHeight: 22 },
+});
 
-  // --- きめる ---
-  kimeruContent: {
-    flex: 1,
-    paddingHorizontal: 24,
-    paddingTop: 40,
-    alignItems: 'center',
+const taskStyles = StyleSheet.create({
+  container: { gap: 6, marginVertical: 4 },
+  card: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: colors.cardBg, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 12,
+    borderLeftWidth: 3, borderWidth: 1, borderColor: colors.divider,
   },
-  kimeruList: {
-    width: '100%',
-    gap: 10,
-    marginTop: 32,
-    marginBottom: 24,
+  cardSelected: { borderColor: colors.sumiInk, backgroundColor: '#f8f6f2' },
+  checkbox: {
+    width: 20, height: 20, borderRadius: 10,
+    borderWidth: 2, borderColor: colors.ringUnfilled,
+    justifyContent: 'center', alignItems: 'center',
   },
-  kimeruCard: {
-    backgroundColor: colors.cardBg,
-    borderRadius: 14,
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    borderWidth: 1,
-    borderColor: colors.sumiInk,
-  },
-  kimeruCardText: {
-    fontSize: 15,
-    color: colors.text,
-    fontWeight: '500',
-  },
-  kumoSection: {
-    width: '100%',
-    marginBottom: 32,
-  },
-  kumoLabel: {
-    fontSize: 12,
-    color: colors.textSub,
-    marginBottom: 8,
-    letterSpacing: 0.3,
-  },
-  kumoItem: {
-    fontSize: 13,
-    color: colors.textLight,
-    lineHeight: 22,
-  },
-  completeBtn: {
-    backgroundColor: colors.sumiInk,
-    borderRadius: 28,
-    paddingVertical: 16,
-    paddingHorizontal: 48,
-    marginTop: 'auto',
-    marginBottom: 40,
-  },
-  completeBtnText: {
-    fontSize: 15,
-    color: '#FFF',
-    fontWeight: '500',
-    letterSpacing: 1,
+  checkboxChecked: { borderColor: colors.sumiInk, backgroundColor: colors.sumiInk },
+  checkmark: { fontSize: 11, color: '#FFF', fontWeight: '700' },
+  title: { flex: 1, fontSize: 14, color: colors.text },
+  divider: {
+    height: StyleSheet.hairlineWidth, backgroundColor: colors.divider,
+    marginVertical: 4, marginHorizontal: 8,
   },
 });

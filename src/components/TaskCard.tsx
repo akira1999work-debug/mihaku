@@ -9,7 +9,14 @@ import Animated, {
 } from 'react-native-reanimated';
 import { BrushRing } from './BrushRing';
 import { colors } from '../theme';
-import type { TaskWithSubs, SubTask } from '../types/task';
+import type { TaskWithSubs, SubTask, TaskAxis } from '../types/task';
+
+const AXIS_COLORS: Record<TaskAxis, string> = {
+  work: colors.axisWork,
+  health: colors.axisHealth,
+  enrichment: colors.axisEnrichment,
+  routine: colors.axisRoutine,
+};
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -108,7 +115,9 @@ export function TaskCard({
         styles.card,
         isCompleted && styles.completedCard,
         isReleased && styles.releasedCard,
-        { opacity: isReleasing ? undefined : cardOpacity },
+        { opacity: isReleasing ? undefined : cardOpacity,
+          borderLeftWidth: 3,
+          borderLeftColor: AXIS_COLORS[task.axis] ?? colors.axisWork },
         isReleasing && releaseAnimStyle,
       ]}
       pointerEvents={isReleasing ? 'none' : 'auto'}
