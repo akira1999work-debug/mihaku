@@ -25,6 +25,7 @@ interface Props {
   onToggleSubtask: (id: number) => void;
   onAddSubtask: (taskId: number, title: string) => void;
   onUpdateMemo: (taskId: number, memo: string) => void;
+  onSetTimeSlot?: (taskId: number, slot: string) => void;
   onReleaseAnimationEnd?: () => void;
 }
 
@@ -33,7 +34,7 @@ export function TaskCard({
   onToggleExpand,
   onComplete, onUncomplete,
   onToggleSubtask, onAddSubtask, onUpdateMemo,
-  onReleaseAnimationEnd,
+  onSetTimeSlot, onReleaseAnimationEnd,
 }: Props) {
   const [subInput, setSubInput] = useState('');
   const [memoInput, setMemoInput] = useState(task.memo || '');
@@ -133,14 +134,21 @@ export function TaskCard({
           ]}>
             {task.title}
           </Text>
-          {totalCount > 0 && (
-            <Text style={styles.sub}>
-              <Text style={completedCount > 0 ? styles.subDone : undefined}>
-                {isCompleted ? `${totalCount}/${totalCount}` : `${completedCount}`}
+          <View style={styles.subtitleRow}>
+            {totalCount > 0 && (
+              <Text style={styles.sub}>
+                <Text style={completedCount > 0 ? styles.subDone : undefined}>
+                  {isCompleted ? `${totalCount}/${totalCount}` : `${completedCount}`}
+                </Text>
+                {isCompleted ? ' 完了' : `/${totalCount} サブタスク`}
               </Text>
-              {isCompleted ? ' 完了' : `/${totalCount} サブタスク`}
-            </Text>
-          )}
+            )}
+            {task.time_slot && task.time_slot !== 'unset' && (
+              <Text style={styles.timeSlotLabel}>
+                {{ morning: '午前', afternoon: '午後', evening: '夜' }[task.time_slot]}
+              </Text>
+            )}
+          </View>
         </TouchableOpacity>
       </View>
 
@@ -174,6 +182,28 @@ export function TaskCard({
                 onSubmitEditing={handleAddSub}
                 returnKeyType="done"
               />
+            </View>
+          )}
+
+          {/* Time slot */}
+          {!isCompleted && onSetTimeSlot && (
+            <View style={styles.timeSlotRow}>
+              <Text style={styles.timeSlotQuestion}>いつやる？</Text>
+              {(['morning', 'afternoon', 'evening', 'unset'] as const).map((slot) => {
+                const label = { morning: '午前', afternoon: '午後', evening: '夜', unset: '未定' }[slot];
+                const active = task.time_slot === slot;
+                return (
+                  <TouchableOpacity
+                    key={slot}
+                    style={[styles.timeSlotBtn, active && styles.timeSlotBtnActive]}
+                    onPress={() => onSetTimeSlot(task.id, slot)}
+                  >
+                    <Text style={[styles.timeSlotBtnText, active && styles.timeSlotBtnTextActive]}>
+                      {label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
             </View>
           )}
 
@@ -259,12 +289,23 @@ const styles = StyleSheet.create({
     textDecorationLine: 'line-through',
     textDecorationColor: '#b8c4ab',
   },
+  subtitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   sub: {
     fontSize: 11,
     color: colors.textSub,
   },
   subDone: {
     color: colors.completedSub,
+  },
+  timeSlotLabel: {
+    fontSize: 10,
+    color: colors.textSub,
+    opacity: 0.7,
+    letterSpacing: 0.3,
   },
   expandedArea: {
     marginTop: 14,
@@ -304,6 +345,36 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.text,
     paddingVertical: 4,
+  },
+  timeSlotRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 10,
+  },
+  timeSlotQuestion: {
+    fontSize: 12,
+    color: colors.textSub,
+    letterSpacing: 0.3,
+  },
+  timeSlotBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 5,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: colors.divider,
+  },
+  timeSlotBtnActive: {
+    borderColor: colors.sumiInk,
+    backgroundColor: '#f0ede8',
+  },
+  timeSlotBtnText: {
+    fontSize: 11,
+    color: colors.textSub,
+  },
+  timeSlotBtnTextActive: {
+    color: colors.sumiInk,
+    fontWeight: '500',
   },
   memo: {
     marginTop: 10,

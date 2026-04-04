@@ -32,6 +32,7 @@ export default function HomeScreen() {
     getTodayTasks, addTask,
     completeTask, uncompleteTask, releaseTask,
     toggleSubtask, addSubtask, updateMemo,
+    setTimeSlot,
   } = useTasks();
 
   const { resetDone, needsSetup, dismissSetup } = useDailyReset();
@@ -357,6 +358,10 @@ export default function HomeScreen() {
               onToggleSubtask={handleToggleSubtask}
               onAddSubtask={handleAddSubtask}
               onUpdateMemo={handleUpdateMemo}
+              onSetTimeSlot={async (taskId, slot) => {
+                await setTimeSlot(taskId, slot);
+                await refresh();
+              }}
               onReleaseAnimationEnd={handleReleaseAnimationEnd}
             />
           )}

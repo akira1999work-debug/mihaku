@@ -1,4 +1,5 @@
 export type TaskStatus = 'pool' | 'today' | 'completed' | 'released';
+export type TimeSlot = 'morning' | 'afternoon' | 'evening' | 'unset';
 
 export interface SubTask {
   id: number;
@@ -17,6 +18,7 @@ export interface Task {
   completed_at: string | null;
   released_at: string | null;
   selected_date: string | null;
+  time_slot: TimeSlot;
   sort_order: number;
 }
 

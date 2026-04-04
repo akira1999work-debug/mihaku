@@ -11,6 +11,7 @@ export async function initDatabase(db: SQLiteDatabase) {
       completed_at TEXT,
       released_at TEXT,
       selected_date TEXT,
+      time_slot TEXT NOT NULL DEFAULT 'unset',
       sort_order INTEGER NOT NULL DEFAULT 0
     );
 

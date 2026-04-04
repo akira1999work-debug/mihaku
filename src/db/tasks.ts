@@ -139,12 +139,19 @@ export function useTasks() {
     );
   }, [db]);
 
+  const setTimeSlot = useCallback(async (id: number, timeSlot: string): Promise<void> => {
+    await db.runAsync(
+      `UPDATE tasks SET time_slot = ? WHERE id = ?`,
+      [timeSlot, id]
+    );
+  }, [db]);
+
   return {
     getTodayTasks, getPoolTasks, addTask,
     completeTask, uncompleteTask, releaseTask,
     updateTask, updateMemo,
     addSubtask, toggleSubtask,
     saveMoodCheck, selectForToday,
-    getReleaseLogs,
+    setTimeSlot, getReleaseLogs,
   };
 }
