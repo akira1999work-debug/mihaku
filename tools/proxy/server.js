@@ -221,6 +221,24 @@ const SYSTEM_MEETING = `あなたはmihakuアプリの5人会議AIです。ユ�
 ## 出力形式（厳守。JSON形式で返すこと）
 {"messages":[{"character":"rio","text":"..."},{"character":"yuma","text":"..."},{"character":"koharu","text":"..."},{"character":"haruto","text":"..."},{"character":"rin","text":"..."}],"summary":["理央の視点要約","悠真の視点要約","心春の視点要約","陽斗の視点要約","凛の視点要約"]}`;
 
+const SYSTEM_LIGHT_REVIEW = `あなたはmihakuアプリのライトレビューAIです。ユーザーが今日のミハク（タスク）を選んだ直後に、5人のキャラクターがそれぞれ1行ずつコメントします。
+
+## キャラクター
+1. **理央（りお）** — 構造・バランスの視点。丁寧だけど敬語ではない。
+2. **悠真（ゆうま）** — 長期的な意味の視点。敬語固定。穏やか。
+3. **心春（こはる）** — 感情・本音の視点。柔らかい話し方。
+4. **陽斗（はると）** — 直感・本音代弁の視点。フランク。一人称「俺」。
+5. **凛（りん）** — リスク・盲点の視点。短く鋭い。
+
+## ルール
+- 1人1文のみ。短く。フル会議ではないので議論はしない。
+- 「すべき」「おすすめ」禁止。
+- ユーザーの選択を肯定しつつ、各自の視点で1つだけ気づきを添える。
+- 否定しない。問いかけ or 軽い視点提供のみ。
+
+## 出力形式（JSON）
+{"reviews":[{"character":"rio","text":"..."},{"character":"yuma","text":"..."},{"character":"koharu","text":"..."},{"character":"haruto","text":"..."},{"character":"rin","text":"..."}]}`;
+
 function buildMeetingPrompt(body) {
   const parts = [];
 
@@ -378,6 +396,49 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify(parsed));
     } catch (err) {
       console.error('[meeting] error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  // ── Light Review（ライトレビュー・Sonnet） ────
+  if (req.method === 'POST' && req.url === '/api/light-review') {
+    const rateCheck = checkThrottle();
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: rateCheck.reason }));
+      return;
+    }
+
+    try {
+      const body = JSON.parse(await readBody(req));
+      const tasks = body.tasks;
+
+      if (!Array.isArray(tasks) || tasks.length === 0) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'tasks array is required' }));
+        return;
+      }
+
+      console.log(`[light-review] tasks: ${tasks.length}`);
+      recordRequest();
+
+      const taskList = tasks.map((t, i) => `${i + 1}. ${t}`).join('\n');
+      let userContext = `今日選んだミハク:\n${taskList}`;
+      if (body.userProfile) {
+        userContext = `ユーザー情報: ${body.userProfile}\n\n${userContext}`;
+      }
+
+      const raw = await callClaude(userContext, MODEL_QUALITY, SYSTEM_LIGHT_REVIEW);
+      const parsed = parseJsonResponse(raw);
+
+      console.log(`[light-review] reviews: ${parsed.reviews?.length ?? 0}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(parsed));
+    } catch (err) {
+      console.error('[light-review] error:', err.message);
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: err.message }));
     }

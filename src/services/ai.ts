@@ -18,6 +18,8 @@ import type {
   RefineResult,
   MeetingRequest,
   MeetingResponse,
+  LightReviewRequest,
+  LightReviewResponse,
 } from './ai-types';
 
 // ── Step 1: タスク抽出（高速） ─────────────────
@@ -57,6 +59,19 @@ export async function runMeeting(
     return meetingViaProxy(request, config.proxyUrl);
   }
   return meetingViaApi(request, config.apiKey);
+}
+
+// ── ライトレビュー ────────────────────────────
+
+/** ミハク確定後のライトレビュー（5人1行ずつ） */
+export async function runLightReview(
+  request: LightReviewRequest,
+  config: AiConfig,
+): Promise<LightReviewResponse> {
+  if (config.mode === 'proxy') {
+    return lightReviewViaProxy(request, config.proxyUrl);
+  }
+  return lightReviewViaApi(request, config.apiKey);
 }
 
 // ── 一括実行（後方互換） ───────────────────────
@@ -104,6 +119,26 @@ async function classifyViaProxy(
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ tasks }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
+    throw new Error(`Proxy error: ${err.error ?? res.statusText}`);
+  }
+
+  return res.json();
+}
+
+async function lightReviewViaProxy(
+  request: LightReviewRequest,
+  proxyUrl: string,
+): Promise<LightReviewResponse> {
+  const url = `${proxyUrl.replace(/\/+$/, '')}/api/light-review`;
+
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
   });
 
   if (!res.ok) {
@@ -208,6 +243,46 @@ async function classifyViaApi(
   return extractJson(text);
 }
 
+async function lightReviewViaApi(
+  request: LightReviewRequest,
+  apiKey: string,
+): Promise<LightReviewResponse> {
+  if (!apiKey) {
+    throw new Error('APIキーが設定されていません');
+  }
+
+  const taskList = request.tasks.map((t, i) => `${i + 1}. ${t}`).join('\n');
+  let userContent = `今日選んだミハク:\n${taskList}`;
+  if (request.userProfile) {
+    userContent = `ユーザー情報: ${request.userProfile}\n\n${userContent}`;
+  }
+
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      system: buildLightReviewSystemPrompt(),
+      messages: [{ role: 'user', content: userContent }],
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: { message: 'Unknown error' } }));
+    throw new Error(`API error: ${err.error?.message ?? res.statusText}`);
+  }
+
+  const data = await res.json();
+  const text = data.content?.[0]?.text ?? '';
+  return extractJson(text);
+}
+
 async function meetingViaApi(
   request: MeetingRequest,
   apiKey: string,
@@ -294,6 +369,26 @@ ${taskList}
   ]
 }
 \`\`\``;
+}
+
+function buildLightReviewSystemPrompt(): string {
+  return `あなたはmihakuアプリのライトレビューAIです。ユーザーが今日のミハク（タスク）を選んだ直後に、5人のキャラクターがそれぞれ1行ずつコメントします。
+
+## キャラクター
+1. **理央（りお）** — 構造・バランスの視点。丁寧だけど敬語ではない。
+2. **悠真（ゆうま）** — 長期的な意味の視点。敬語固定。穏やか。
+3. **心春（こはる）** — 感情・本音の視点。柔らかい話し方。
+4. **陽斗（はると）** — 直感・本音代弁の視点。フランク。一人称「俺」。
+5. **凛（りん）** — リスク・盲点の視点。短く鋭い。
+
+## ルール
+- 1人1文のみ。短く。フル会議ではないので議論はしない。
+- 「すべき」「おすすめ」禁止。
+- ユーザーの選択を肯定しつつ、各自の視点で1つだけ気づきを添える。
+- 否定しない。問いかけ or 軽い視点提供のみ。
+
+## 出力形式（JSON）
+{"reviews":[{"character":"rio","text":"..."},{"character":"yuma","text":"..."},{"character":"koharu","text":"..."},{"character":"haruto","text":"..."},{"character":"rin","text":"..."}]}`;
 }
 
 function buildMeetingSystemPrompt(): string {

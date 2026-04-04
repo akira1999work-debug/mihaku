@@ -50,6 +50,19 @@ export interface MeetingResponse {
   summary: string[];
 }
 
+/** ライトレビューリクエスト */
+export interface LightReviewRequest {
+  /** 今日選んだミハクのタイトル一��� */
+  tasks: string[];
+  /** 「5人に伝えておきたいこと」 */
+  userProfile?: string;
+}
+
+/** ライトレビューレスポンス */
+export interface LightReviewResponse {
+  reviews: MeetingMessage[];
+}
+
 /** AI接続モード */
 export type AiMode = 'proxy' | 'api';
 
