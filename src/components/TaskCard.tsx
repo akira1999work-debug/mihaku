@@ -26,6 +26,8 @@ interface Props {
   onAddSubtask: (taskId: number, title: string) => void;
   onUpdateMemo: (taskId: number, memo: string) => void;
   onSetTimeSlot?: (taskId: number, slot: string) => void;
+  editing?: boolean;
+  onEditTitle?: (taskId: number, newTitle: string) => void;
   onReleaseAnimationEnd?: () => void;
 }
 
@@ -34,10 +36,11 @@ export function TaskCard({
   onToggleExpand,
   onComplete, onUncomplete,
   onToggleSubtask, onAddSubtask, onUpdateMemo,
-  onSetTimeSlot, onReleaseAnimationEnd,
+  onSetTimeSlot, editing, onEditTitle, onReleaseAnimationEnd,
 }: Props) {
   const [subInput, setSubInput] = useState('');
   const [memoInput, setMemoInput] = useState(task.memo || '');
+  const [titleInput, setTitleInput] = useState(task.title);
 
   const isCompleted = task.status === 'completed';
   const isReleased = task.status === 'released';
@@ -128,12 +131,34 @@ export function TaskCard({
         </TouchableOpacity>
 
         <TouchableOpacity style={styles.content} onPress={handleCardTap} activeOpacity={0.7}>
-          <Text style={[
-            styles.title,
-            isCompleted && styles.completedTitle,
-          ]}>
-            {task.title}
-          </Text>
+          {editing && onEditTitle ? (
+            <TextInput
+              style={[styles.title, styles.titleEditing]}
+              value={titleInput}
+              onChangeText={setTitleInput}
+              onBlur={() => {
+                const trimmed = titleInput.trim();
+                if (trimmed && trimmed !== task.title) {
+                  onEditTitle(task.id, trimmed);
+                }
+              }}
+              onSubmitEditing={() => {
+                const trimmed = titleInput.trim();
+                if (trimmed && trimmed !== task.title) {
+                  onEditTitle(task.id, trimmed);
+                }
+              }}
+              autoFocus
+              returnKeyType="done"
+            />
+          ) : (
+            <Text style={[
+              styles.title,
+              isCompleted && styles.completedTitle,
+            ]}>
+              {task.title}
+            </Text>
+          )}
           <View style={styles.subtitleRow}>
             {totalCount > 0 && (
               <Text style={styles.sub}>
@@ -283,6 +308,11 @@ const styles = StyleSheet.create({
     fontWeight: '500',
     color: colors.text,
     marginBottom: 2,
+  },
+  titleEditing: {
+    borderBottomWidth: 1,
+    borderBottomColor: colors.sumiInk,
+    paddingVertical: 2,
   },
   completedTitle: {
     color: colors.completedTitle,

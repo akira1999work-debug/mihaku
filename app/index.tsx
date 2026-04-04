@@ -16,6 +16,7 @@ import { RefineView } from '../src/components/RefineView';
 import { AiSettingsView } from '../src/components/AiSettingsView';
 import { DailySetup } from '../src/components/DailySetup';
 import { OnboardingFlow } from '../src/components/OnboardingFlow';
+import { MoodCheck } from '../src/components/MoodCheck';
 import { useSpeechInput } from '../src/hooks/useSpeechInput';
 import { useDailyReset } from '../src/hooks/useDailyReset';
 import { useOnboarding } from '../src/hooks/useOnboarding';
@@ -35,7 +36,7 @@ export default function HomeScreen() {
     getTodayTasks, addTask,
     completeTask, uncompleteTask, releaseTask,
     toggleSubtask, addSubtask, updateMemo,
-    setTimeSlot,
+    updateTask, setTimeSlot, saveMoodCheck,
   } = useTasks();
 
   const { resetDone, needsSetup, dismissSetup } = useDailyReset();
@@ -48,6 +49,12 @@ export default function HomeScreen() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [releasingId, setReleasingId] = useState<number | null>(null);
   const [confirmRelease, setConfirmRelease] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [moodCheck, setMoodCheck] = useState<{
+    taskId: number;
+    taskTitle: string;
+    action: 'complete' | 'release';
+  } | null>(null);
 
   // 音声入��
   const speech = useSpeechInput();
@@ -148,6 +155,8 @@ export default function HomeScreen() {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     await completeTask(id);
     await refresh();
+    const task = tasks.find((t) => t.id === id);
+    if (task) setMoodCheck({ taskId: id, taskTitle: task.title, action: 'complete' });
   };
 
   const handleUncomplete = async (id: number) => {
@@ -173,11 +182,13 @@ export default function HomeScreen() {
 
   const handleReleaseAnimationEnd = useCallback(async () => {
     if (releasingId == null) return;
+    const task = tasks.find((t) => t.id === releasingId);
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
     await releaseTask(releasingId);
     setReleasingId(null);
     await refresh();
-  }, [releasingId, releaseTask, refresh]);
+    if (task) setMoodCheck({ taskId: task.id, taskTitle: task.title, action: 'release' });
+  }, [releasingId, releaseTask, refresh, tasks]);
 
   const handleConsult = () => {
     const task = tasks.find((t) => t.id === expandedId);
@@ -194,7 +205,9 @@ export default function HomeScreen() {
   };
 
   const handleEdit = () => {
-    // TODO: Title edit mode
+    if (expandedId != null) {
+      setEditingId(expandedId);
+    }
   };
 
   const handleToggleExpand = (id: number) => {
@@ -400,6 +413,12 @@ export default function HomeScreen() {
                 await setTimeSlot(taskId, slot);
                 await refresh();
               }}
+              editing={editingId === item.id}
+              onEditTitle={async (taskId, newTitle) => {
+                await updateTask(taskId, newTitle);
+                setEditingId(null);
+                await refresh();
+              }}
               onReleaseAnimationEnd={handleReleaseAnimationEnd}
             />
           )}
@@ -503,6 +522,20 @@ export default function HomeScreen() {
           cancelLabel="やめる"
           onConfirm={handleConfirmRelease}
           onCancel={handleCancelRelease}
+        />
+
+        {/* Mood check */}
+        <MoodCheck
+          visible={moodCheck != null}
+          action={moodCheck?.action ?? 'complete'}
+          taskTitle={moodCheck?.taskTitle ?? ''}
+          onSelect={async (mood) => {
+            if (moodCheck) {
+              await saveMoodCheck(moodCheck.taskId, mood, moodCheck.action);
+            }
+            setMoodCheck(null);
+          }}
+          onSkip={() => setMoodCheck(null)}
         />
 
         {/* Voice recording overlay */}
