@@ -13,11 +13,12 @@ import {
 import { colors } from '../theme';
 import { VoiceOverlay } from './VoiceOverlay';
 import { RefineView } from './RefineView';
+import { MeetingView } from './MeetingView';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { TaskItem } from '../services/ai-types';
 import { saveAiConfig, loadAiConfig } from '../services/ai-config-store';
 
-type Step = 'intro' | 'hakidasu' | 'furuu' | 'sukuu' | 'kimeru' | 'done';
+type Step = 'intro' | 'hakidasu' | 'furuu' | 'profile' | 'sukuu' | 'kimeru' | 'done';
 
 interface OnboardingFlowProps {
   onComplete: (mihakuTitles: string[], kumoTitles: string[]) => void;
@@ -29,6 +30,8 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
   const [textInput, setTextInput] = useState('');
   const [mihaku, setMihaku] = useState<string[]>([]);
   const [kumo, setKumo] = useState<string[]>([]);
+  const [userProfile, setUserProfile] = useState('');
+  const [profileInput, setProfileInput] = useState('');
   const speech = useSpeechInput();
 
   // --- イントロ ---
@@ -157,12 +160,97 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
           onConfirm={(mihakuTitles, kumoTitles) => {
             setMihaku(mihakuTitles);
             setKumo(kumoTitles);
-            // すくう（5人会議）をスキップしてきめるへ
-            // 初回体験では5人会議は重すぎるかもしれないのでオプション化
-            // TODO: iter9の設計では会議を含むが、まずフロー繋ぎを優先
-            setStep('kimeru');
+            setStep('profile');
           }}
           onCancel={() => setStep('hakidasu')}
+        />
+      </View>
+    );
+  }
+
+  // --- 心春の自己紹介聞き取り ---
+  if (step === 'profile') {
+    const handleProfileSubmit = async () => {
+      const text = profileInput.trim();
+      if (text) {
+        setUserProfile(text);
+        // 「5人に伝えておきたいこと」に保存
+        try {
+          const config = await loadAiConfig();
+          // userProfileはAiConfigとは別にSecureStoreに保存
+          if (Platform.OS === 'web') {
+            localStorage.setItem('mihaku_user_profile', text);
+          } else {
+            const SecureStore = require('expo-secure-store');
+            await SecureStore.setItemAsync('mihaku_user_profile', text);
+          }
+        } catch {}
+      }
+      setStep('sukuu');
+    };
+
+    return (
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
+        <View style={styles.profileContent}>
+          <Text style={styles.profileIcon}>🌸</Text>
+          <Text style={styles.profileName}>心春</Text>
+          <Text style={styles.profileQuestion}>
+            ちょっと聞いていい？{'\n'}
+            普段どんな生活してるの？
+          </Text>
+          <Text style={styles.profileHint}>
+            教えてくれると、5人があなたに合った{'\n'}
+            問いかけができるようになります
+          </Text>
+
+          <TextInput
+            style={styles.profileInput}
+            placeholder="例: 平日は9-18で会社員。夜に副業。水曜はジム..."
+            placeholderTextColor={colors.textSub}
+            value={profileInput}
+            onChangeText={setProfileInput}
+            multiline
+            numberOfLines={3}
+          />
+
+          <View style={styles.profileActions}>
+            <TouchableOpacity
+              style={styles.skipLink}
+              onPress={() => setStep('sukuu')}
+            >
+              <Text style={styles.skipLinkText}>スキップ</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.nextBtn, !profileInput.trim() && styles.nextBtnDisabled]}
+              onPress={handleProfileSubmit}
+              disabled={!profileInput.trim()}
+            >
+              <Text style={styles.nextBtnText}>伝える</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    );
+  }
+
+  // --- すくう（5人会議） ---
+  if (step === 'sukuu') {
+    const taskList = mihaku.map((t) => `・${t}`).join('\n');
+    const taskContext = mihaku.length > 0
+      ? `ミハク候補:\n${taskList}`
+      : '今日のタスクについて相談';
+
+    return (
+      <View style={styles.container}>
+        <MeetingView
+          taskContext={taskContext}
+          phase="sukuu"
+          userProfile={userProfile || undefined}
+          onClose={() => setStep('kimeru')}
         />
       </View>
     );
@@ -355,6 +443,69 @@ const styles = StyleSheet.create({
   },
 
   // --- きめる ---
+  // --- プロフィール ---
+  profileContent: {
+    flex: 1,
+    paddingHorizontal: 32,
+    paddingTop: 60,
+    alignItems: 'center',
+  },
+  profileIcon: {
+    fontSize: 32,
+    marginBottom: 8,
+  },
+  profileName: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#7a5d6b',
+    letterSpacing: 1,
+    marginBottom: 20,
+  },
+  profileQuestion: {
+    fontSize: 17,
+    color: colors.text,
+    textAlign: 'center',
+    lineHeight: 28,
+    letterSpacing: 0.5,
+    marginBottom: 12,
+  },
+  profileHint: {
+    fontSize: 13,
+    color: colors.textSub,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 28,
+  },
+  profileInput: {
+    width: '100%',
+    minHeight: 80,
+    backgroundColor: colors.cardBg,
+    borderRadius: 16,
+    padding: 16,
+    fontSize: 14,
+    color: colors.text,
+    textAlignVertical: 'top',
+    borderWidth: 1,
+    borderColor: colors.divider,
+    marginBottom: 20,
+  },
+  profileActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+  },
+  skipLink: {
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+  },
+  skipLinkText: {
+    fontSize: 14,
+    color: colors.textLight,
+  },
+  nextBtnDisabled: {
+    backgroundColor: colors.ringUnfilled,
+  },
+
   kimeruContent: {
     flex: 1,
     paddingHorizontal: 24,
