@@ -19,6 +19,7 @@ import { OnboardingFlow } from '../src/components/OnboardingFlow';
 import { useSpeechInput } from '../src/hooks/useSpeechInput';
 import { useDailyReset } from '../src/hooks/useDailyReset';
 import { useOnboarding } from '../src/hooks/useOnboarding';
+import { loadUserProfile } from '../src/services/user-profile-store';
 import { splitChips } from '../src/utils/splitChips';
 import { colors } from '../src/theme';
 import { getDailyWord } from '../src/data/dailyWords';
@@ -54,6 +55,12 @@ export default function HomeScreen() {
   const [chips, setChips] = useState<string[]>([]);
   const [rawVoiceText, setRawVoiceText] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [userProfile, setUserProfile] = useState('');
+
+  // userProfileを起動時に読み込み
+  useEffect(() => {
+    loadUserProfile().then(setUserProfile);
+  }, []);
 
   const refresh = useCallback(async () => {
     const result = await getTodayTasks();
@@ -181,6 +188,7 @@ export default function HomeScreen() {
         taskId: String(task.id),
         taskContext: `「${task.title}」— このタスクについて相談したい`,
         phase: 'migaku',
+        userProfile: userProfile || undefined,
       },
     });
   };
@@ -347,6 +355,7 @@ export default function HomeScreen() {
                   params: {
                     taskContext: taskList || '今日はまだタスクがありません',
                     phase: 'sukuu',
+                    userProfile: userProfile || undefined,
                   },
                 });
               }}>

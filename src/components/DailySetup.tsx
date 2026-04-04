@@ -14,10 +14,18 @@ import {
 import { colors } from '../theme';
 import { useTasks } from '../db/tasks';
 import type { Task } from '../types/task';
-import type { AiConfig } from '../services/ai-types';
+import type { AiConfig, MeetingMessage } from '../services/ai-types';
 import { loadAiConfig } from '../services/ai-config-store';
+import { loadUserProfile } from '../services/user-profile-store';
+import { runLightReview } from '../services/ai';
 
 const MAX_SELECT = 3;
+const CHAR_NAMES: Record<string, string> = {
+  rio: '理央', yuma: '悠真', koharu: '心春', haruto: '陽斗', rin: '凛',
+};
+const CHAR_ICONS: Record<string, string> = {
+  rio: '💡', yuma: '🌿', koharu: '🌸', haruto: '⚡', rin: '❄️',
+};
 
 type SetupPhase = 'select' | 'reviewing' | 'done';
 
@@ -33,6 +41,7 @@ export function DailySetup({ onComplete, onSkip }: DailySetupProps) {
   const [phase, setPhase] = useState<SetupPhase>('select');
   const [loading, setLoading] = useState(true);
   const [confirming, setConfirming] = useState(false);
+  const [reviews, setReviews] = useState<MeetingMessage[]>([]);
 
   useEffect(() => {
     getPoolTasks().then((tasks) => {
@@ -58,14 +67,60 @@ export function DailySetup({ onComplete, onSkip }: DailySetupProps) {
     setConfirming(true);
 
     // 選択したタスクを today に移動
+    const selectedTitles: string[] = [];
     for (const id of selectedIds) {
       await selectForToday(id);
+      const task = poolTasks.find((t) => t.id === id);
+      if (task) selectedTitles.push(task.title);
     }
 
-    // TODO: ライトレビュー（Phase 2で実装）
-    // 今はそのまま完了
-    onComplete();
-  }, [selectedIds, selectForToday, onComplete]);
+    // ライトレビュー
+    try {
+      const config = await loadAiConfig();
+      const profile = await loadUserProfile();
+      const response = await runLightReview(
+        { tasks: selectedTitles, userProfile: profile || undefined },
+        config,
+      );
+      setReviews(response.reviews);
+      setPhase('reviewing');
+    } catch {
+      // ライトレビュー失敗時はスキップして完了
+      onComplete();
+    }
+  }, [selectedIds, selectForToday, poolTasks, onComplete]);
+
+  // --- ライトレビュー表示 ---
+  if (phase === 'reviewing') {
+    return (
+      <View style={styles.container}>
+        <View style={styles.reviewContent}>
+          <Text style={styles.reviewTitle}>ライトレビュー</Text>
+          <Text style={styles.reviewDesc}>5人からひとこと</Text>
+
+          <View style={styles.reviewList}>
+            {reviews.map((r, i) => (
+              <View key={i} style={styles.reviewItem}>
+                <Text style={styles.reviewIcon}>{CHAR_ICONS[r.character] ?? '💬'}</Text>
+                <View style={styles.reviewTextWrap}>
+                  <Text style={styles.reviewName}>{CHAR_NAMES[r.character] ?? r.character}</Text>
+                  <Text style={styles.reviewText}>{r.text}</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+
+          <TouchableOpacity
+            style={styles.reviewDoneBtn}
+            onPress={onComplete}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.reviewDoneBtnText}>これでいく</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
@@ -250,6 +305,66 @@ const styles = StyleSheet.create({
     backgroundColor: colors.ringUnfilled,
   },
   confirmBtnText: {
+    fontSize: 14,
+    color: '#FFF',
+    fontWeight: '500',
+    letterSpacing: 0.5,
+  },
+
+  // --- ライトレビュー ---
+  reviewContent: {
+    flex: 1,
+    paddingHorizontal: 24,
+    paddingTop: 32,
+  },
+  reviewTitle: {
+    fontSize: 18,
+    fontWeight: '500',
+    color: colors.text,
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  reviewDesc: {
+    fontSize: 13,
+    color: colors.textLight,
+    marginBottom: 24,
+  },
+  reviewList: {
+    gap: 16,
+    marginBottom: 32,
+  },
+  reviewItem: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  reviewIcon: {
+    fontSize: 16,
+    marginTop: 2,
+  },
+  reviewTextWrap: {
+    flex: 1,
+  },
+  reviewName: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textLight,
+    marginBottom: 2,
+    letterSpacing: 0.3,
+  },
+  reviewText: {
+    fontSize: 14,
+    color: colors.text,
+    lineHeight: 22,
+  },
+  reviewDoneBtn: {
+    backgroundColor: colors.sumiInk,
+    borderRadius: 24,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 'auto',
+    marginBottom: 32,
+  },
+  reviewDoneBtnText: {
     fontSize: 14,
     color: '#FFF',
     fontWeight: '500',

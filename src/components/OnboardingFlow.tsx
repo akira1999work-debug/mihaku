@@ -16,7 +16,7 @@ import { RefineView } from './RefineView';
 import { MeetingView } from './MeetingView';
 import { useSpeechInput } from '../hooks/useSpeechInput';
 import type { TaskItem } from '../services/ai-types';
-import { saveAiConfig, loadAiConfig } from '../services/ai-config-store';
+import { saveUserProfile } from '../services/user-profile-store';
 
 type Step = 'intro' | 'hakidasu' | 'furuu' | 'profile' | 'sukuu' | 'kimeru' | 'done';
 
@@ -174,17 +174,7 @@ export function OnboardingFlow({ onComplete }: OnboardingFlowProps) {
       const text = profileInput.trim();
       if (text) {
         setUserProfile(text);
-        // 「5人に伝えておきたいこと」に保存
-        try {
-          const config = await loadAiConfig();
-          // userProfileはAiConfigとは別にSecureStoreに保存
-          if (Platform.OS === 'web') {
-            localStorage.setItem('mihaku_user_profile', text);
-          } else {
-            const SecureStore = require('expo-secure-store');
-            await SecureStore.setItemAsync('mihaku_user_profile', text);
-          }
-        } catch {}
+        await saveUserProfile(text);
       }
       setStep('sukuu');
     };
