@@ -17,6 +17,7 @@ import { AiSettingsView } from '../src/components/AiSettingsView';
 import { DailySetup } from '../src/components/DailySetup';
 import { OnboardingFlow } from '../src/components/OnboardingFlow';
 import { MoodCheck } from '../src/components/MoodCheck';
+import { PlanView } from '../src/components/PlanView';
 import { useSpeechInput } from '../src/hooks/useSpeechInput';
 import { useDailyReset } from '../src/hooks/useDailyReset';
 import { useOnboarding } from '../src/hooks/useOnboarding';
@@ -62,6 +63,7 @@ export default function HomeScreen() {
   const [chips, setChips] = useState<string[]>([]);
   const [rawVoiceText, setRawVoiceText] = useState('');
   const [showSettings, setShowSettings] = useState(false);
+  const [showPlan, setShowPlan] = useState(false);
   const [userProfile, setUserProfile] = useState('');
 
   // userProfileを起動時に読み込み
@@ -283,6 +285,15 @@ export default function HomeScreen() {
             setShowSettings(false);
           }}
         />
+      </SafeAreaView>
+    );
+  }
+
+  // プラン画面
+  if (showPlan) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <PlanView onClose={() => setShowPlan(false)} />
       </SafeAreaView>
     );
   }
