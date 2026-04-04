@@ -19,6 +19,7 @@ import type {
 } from '../services/ai-types';
 import { runMeeting } from '../services/ai';
 import { loadAiConfig } from '../services/ai-config-store';
+import { useMeetingLogs } from '../db/meetings';
 
 // ── キャラ定義 ──────────────────────────────────
 
@@ -41,6 +42,8 @@ const REACTIONS = ['👍', '❤️'] as const;
 // ── Props ───────────────────────────────────────
 
 interface MeetingViewProps {
+  /** 相談対象のタスクID（みがく時、DB保存用） */
+  taskId?: number;
   /** 相談対象のタスク情報 */
   taskContext: string;
   /** 初期フェーズ */
@@ -65,7 +68,7 @@ function CharacterBubble({ message, onReaction }: BubbleProps) {
   const handleReaction = (reaction: string) => {
     const next = reacted === reaction ? null : reaction;
     setReacted(next);
-    if (next) onReaction(message.character, next);
+    onReaction(message.character, next ?? '');
   };
 
   return (
@@ -164,7 +167,7 @@ type ChatEntry =
   | { type: 'user'; text: string }
   | { type: 'summary'; lines: string[] };
 
-export function MeetingView({ taskContext, phase, userProfile, onClose }: MeetingViewProps) {
+export function MeetingView({ taskId, taskContext, phase, userProfile, onClose }: MeetingViewProps) {
   const [entries, setEntries] = useState<ChatEntry[]>([]);
   const [loading, setLoading] = useState(false);
   const [input, setInput] = useState('');
@@ -172,6 +175,8 @@ export function MeetingView({ taskContext, phase, userProfile, onClose }: Meetin
   const [error, setError] = useState<string | null>(null);
   const scrollRef = useRef<ScrollView>(null);
   const historyRef = useRef<MeetingMessage[]>([]);
+  const meetingIdRef = useRef<number | null>(null);
+  const { saveMeetingLog, saveReaction, removeReaction } = useMeetingLogs();
 
   useEffect(() => {
     loadAiConfig().then(setConfig);
@@ -218,6 +223,20 @@ export function MeetingView({ taskContext, phase, userProfile, onClose }: Meetin
         setEntries((prev) => [...prev, { type: 'summary', lines: response.summary }]);
         scrollToBottom();
       }
+
+      // DB保存
+      try {
+        meetingIdRef.current = await saveMeetingLog({
+          taskId,
+          phase,
+          userMessage,
+          messages: response.messages,
+          summary: response.summary,
+        });
+      } catch {
+        // DB保存失敗は握り潰さない（コンソールに出すが会議体験は継続）
+        console.warn('[meeting] failed to save log');
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : 'エラーが発生しました';
       setError(message);
@@ -242,9 +261,17 @@ export function MeetingView({ taskContext, phase, userProfile, onClose }: Meetin
     startMeeting(text);
   };
 
-  const handleReaction = (character: CharacterName, reaction: string) => {
-    // TODO: DBに保存（meeting_reactions）
-    console.log(`[reaction] ${character}: ${reaction}`);
+  const handleReaction = async (character: CharacterName, reaction: string) => {
+    if (!meetingIdRef.current) return;
+    try {
+      if (reaction) {
+        await saveReaction(meetingIdRef.current, character, reaction);
+      } else {
+        await removeReaction(meetingIdRef.current, character);
+      }
+    } catch {
+      console.warn('[meeting] failed to save reaction');
+    }
   };
 
   return (

@@ -7,11 +7,13 @@ import type { MeetingPhase } from '../src/services/ai-types';
 export default function MeetingScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{
+    taskId?: string;
     taskContext?: string;
     phase?: string;
     userProfile?: string;
   }>();
 
+  const taskId = params.taskId ? Number(params.taskId) : undefined;
   const taskContext = params.taskContext ?? '今日のタスクについて相談';
   const phase = (params.phase ?? 'migaku') as MeetingPhase;
   const userProfile = params.userProfile;
@@ -19,6 +21,7 @@ export default function MeetingScreen() {
   return (
     <SafeAreaView style={styles.container}>
       <MeetingView
+        taskId={taskId}
         taskContext={taskContext}
         phase={phase}
         userProfile={userProfile}

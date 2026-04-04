@@ -169,6 +169,7 @@ export default function HomeScreen() {
     router.push({
       pathname: '/meeting',
       params: {
+        taskId: String(task.id),
         taskContext: `「${task.title}」— このタスクについて相談したい`,
         phase: 'migaku',
       },
