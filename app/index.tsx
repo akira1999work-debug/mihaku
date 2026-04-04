@@ -14,7 +14,9 @@ import { VoiceOverlay } from '../src/components/VoiceOverlay';
 import { VoiceChips } from '../src/components/VoiceChips';
 import { RefineView } from '../src/components/RefineView';
 import { AiSettingsView } from '../src/components/AiSettingsView';
+import { DailySetup } from '../src/components/DailySetup';
 import { useSpeechInput } from '../src/hooks/useSpeechInput';
+import { useDailyReset } from '../src/hooks/useDailyReset';
 import { splitChips } from '../src/utils/splitChips';
 import { colors } from '../src/theme';
 import { getDailyWord } from '../src/data/dailyWords';
@@ -32,6 +34,9 @@ export default function HomeScreen() {
     toggleSubtask, addSubtask, updateMemo,
   } = useTasks();
 
+  const { resetDone, needsSetup, dismissSetup } = useDailyReset();
+  const [showDailySetup, setShowDailySetup] = useState(false);
+
   const [tasks, setTasks] = useState<TaskWithSubs[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(true);
@@ -39,7 +44,7 @@ export default function HomeScreen() {
   const [releasingId, setReleasingId] = useState<number | null>(null);
   const [confirmRelease, setConfirmRelease] = useState(false);
 
-  // 音声入力
+  // 音声入��
   const speech = useSpeechInput();
   const [voicePhase, setVoicePhase] = useState<VoicePhase>('idle');
   const [chips, setChips] = useState<string[]>([]);
@@ -53,8 +58,8 @@ export default function HomeScreen() {
   }, [getTodayTasks]);
 
   useEffect(() => {
-    refresh();
-  }, [refresh]);
+    if (resetDone) refresh();
+  }, [resetDone, refresh]);
 
   const activeTasks = tasks.filter((t) => t.status === 'today');
   const showAddButton = activeTasks.length < MAX_TODAY;
@@ -231,6 +236,25 @@ export default function HomeScreen() {
     );
   }
 
+  // デイリーセットアップ
+  if (showDailySetup) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <DailySetup
+          onComplete={() => {
+            setShowDailySetup(false);
+            dismissSetup();
+            refresh();
+          }}
+          onSkip={() => {
+            setShowDailySetup(false);
+            dismissSetup();
+          }}
+        />
+      </SafeAreaView>
+    );
+  }
+
   // ふるいモード: AI整形画面
   if (voicePhase === 'refining' && rawVoiceText) {
     return (
@@ -305,6 +329,17 @@ export default function HomeScreen() {
           </View>
           <Text style={styles.headerSub}>{statusText}</Text>
           <Text style={styles.dailyWord}>{getDailyWord()}</Text>
+
+          {/* デイリーセットアップボタン */}
+          {needsSetup && activeTasks.length === 0 && (
+            <TouchableOpacity
+              style={styles.setupBtn}
+              onPress={() => setShowDailySetup(true)}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.setupBtnText}>今日のミハクを選ぶ</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {/* Task list */}
@@ -503,6 +538,19 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     fontStyle: 'italic',
     letterSpacing: 0.3,
+  },
+  setupBtn: {
+    marginTop: 12,
+    backgroundColor: colors.sumiInk,
+    borderRadius: 20,
+    paddingVertical: 12,
+    alignItems: 'center',
+  },
+  setupBtnText: {
+    fontSize: 14,
+    color: '#FFF',
+    fontWeight: '500',
+    letterSpacing: 0.5,
   },
   list: {
     paddingHorizontal: 24,
