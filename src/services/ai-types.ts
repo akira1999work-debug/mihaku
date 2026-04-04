@@ -18,6 +18,38 @@ export interface ClassifyResult {
 /** ふるう結果 — 後方互換 (= ClassifyResult) */
 export type RefineResult = ClassifyResult;
 
+/** 5人会議のフェーズ */
+export type MeetingPhase = 'sukuu' | 'migaku';
+
+/** 5人のキャラ名 */
+export type CharacterName = 'rio' | 'yuma' | 'koharu' | 'haruto' | 'rin';
+
+/** 会議の1発言 */
+export interface MeetingMessage {
+  character: CharacterName;
+  text: string;
+}
+
+/** 会議リクエスト */
+export interface MeetingRequest {
+  /** 相談対象のタスク（みがく時）or 今日の候補一覧の説明（すくう時） */
+  taskContext: string;
+  /** ユーザーの相談メッセージ */
+  userMessage: string;
+  /** すくう or みがく */
+  phase: MeetingPhase;
+  /** 「5人に伝えておきたいこと」（設定画面のテキスト） */
+  userProfile?: string;
+  /** 過去の会議ログ（継続会話用） */
+  history?: MeetingMessage[];
+}
+
+/** 会議レスポンス */
+export interface MeetingResponse {
+  messages: MeetingMessage[];
+  summary: string[];
+}
+
 /** AI接続モード */
 export type AiMode = 'proxy' | 'api';
 

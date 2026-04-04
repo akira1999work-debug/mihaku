@@ -5,6 +5,7 @@ import {
   Platform, LayoutAnimation,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { useTasks } from '../src/db/tasks';
 import { TaskCard } from '../src/components/TaskCard';
 import { FloatingActionBar } from '../src/components/FloatingActionBar';
@@ -24,6 +25,7 @@ const MAX_TODAY = 3;
 type VoicePhase = 'idle' | 'recording' | 'chips' | 'refining';
 
 export default function HomeScreen() {
+  const router = useRouter();
   const {
     getTodayTasks, addTask,
     completeTask, uncompleteTask, releaseTask,
@@ -162,7 +164,15 @@ export default function HomeScreen() {
   }, [releasingId, releaseTask, refresh]);
 
   const handleConsult = () => {
-    // TODO: Navigate to meeting screen
+    const task = tasks.find((t) => t.id === expandedId);
+    if (!task) return;
+    router.push({
+      pathname: '/meeting',
+      params: {
+        taskContext: `「${task.title}」— このタスクについて相談したい`,
+        phase: 'migaku',
+      },
+    });
   };
 
   const handleEdit = () => {
@@ -275,7 +285,16 @@ export default function HomeScreen() {
               <TouchableOpacity style={styles.headerBtn} onPress={() => setShowSettings(true)}>
                 <Text style={styles.headerBtnText}>⚙</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={styles.headerBtn} onPress={() => {/* TODO: full meeting */}}>
+              <TouchableOpacity style={styles.headerBtn} onPress={() => {
+                const taskList = activeTasks.map((t) => `・${t.title}`).join('\n');
+                router.push({
+                  pathname: '/meeting',
+                  params: {
+                    taskContext: taskList || '今日はまだタスクがありません',
+                    phase: 'sukuu',
+                  },
+                });
+              }}>
                 <Text style={styles.headerBtnText}>☕</Text>
               </TouchableOpacity>
               <TouchableOpacity style={styles.headerBtn} onPress={() => {/* TODO: stock screen */}}>

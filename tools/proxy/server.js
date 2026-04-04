@@ -1,12 +1,16 @@
 /**
  * mihaku ローカルプロキシサーバー
  *
- * モバイルアプリからのAIリクエストを Claude Code SDK に中継する。
+ * モバイルアプリからのAIリクエストを Claude CLI に中継する。
  * Claude Max サブスク内で動くため API課金なし。
  *
  * 使い方:
- *   cd tools/proxy && npm install && node server.js
+ *   cd tools/proxy && node server.js
  *   → http://0.0.0.0:3141 で待機
+ *
+ * 前提:
+ *   - Claude Code CLI がインストール済み（`claude` コマンドが使える）
+ *   - Max契約でログイン済み
  *
  * エンドポイント:
  *   POST /api/extract   — 音声テキスト → タスク抽出（Haiku・高速）
@@ -16,16 +20,19 @@
  */
 
 import { createServer } from 'node:http';
-import { query } from '@anthropic-ai/claude-code';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 const PORT = parseInt(process.env.PORT ?? '3141', 10);
 
 // ── モデル定義 ─────────────────────────────────
-const MODEL_FAST = 'claude-haiku-4-5-20251001';
-const MODEL_QUALITY = 'claude-sonnet-4-6';
+const MODEL_FAST = 'haiku';
+const MODEL_QUALITY = 'sonnet';
 
 // ── 連打防止 ──────────────────────────────────
-const MIN_INTERVAL_MS = 2000;  // 同一エンドポイントへの最低間隔
+const MIN_INTERVAL_MS = 2000;
 let lastRequestTime = 0;
 
 function checkThrottle() {
@@ -58,122 +65,158 @@ function readBody(req) {
   });
 }
 
-// ── SDK呼び出し ────────────────────────────────
-async function callClaude(prompt, model, jsonSchema) {
-  const options = {
-    maxTurns: 1,
-    model,
-  };
+// ── CLI呼び出し ───────────────────────────────
+// claude -p でCLIを呼び出す。
+// - ユーザープロンプト: stdin で渡す（シェルエスケープ・日本語文字化け回避）
+// - システムプロンプト: tmpファイル + --system-prompt-file で渡す
+// - --tools "": エージェント用ツール定義を除外（システムプロンプト20K→3Kに削減）
 
-  if (jsonSchema) {
-    options.outputFormat = {
-      type: 'json_schema',
-      schema: jsonSchema,
+// Windowsのtmpdirは日本語ユーザー名を含む場合がありcmd.exeで化ける
+// ASCII-onlyのパスを使う
+const TMP_DIR = process.env.TEMP_ASCII || 'C:\\Temp\\mihaku-proxy';
+if (!fs.existsSync(TMP_DIR)) fs.mkdirSync(TMP_DIR, { recursive: true });
+
+function callClaude(userPrompt, model, systemPrompt) {
+  return new Promise((resolve, reject) => {
+    const id = Date.now().toString(36);
+    const promptFile = path.join(TMP_DIR, `.mihaku-prompt-${id}.txt`);
+    const systemFile = systemPrompt ? path.join(TMP_DIR, `.mihaku-system-${id}.txt`) : null;
+
+    const cleanup = () => {
+      try { fs.unlinkSync(promptFile); } catch {}
+      if (systemFile) try { fs.unlinkSync(systemFile); } catch {}
     };
-  }
 
-  const messages = [];
-  for await (const event of query({ prompt, options })) {
-    messages.push(event);
-  }
+    // 日本語をtmpファイル経由で渡す（Windowsのstdin文字化け回避）
+    fs.writeFileSync(promptFile, userPrompt, 'utf-8');
 
-  // result メッセージからテキストを取得
-  const resultMsg = messages.filter((m) => m.type === 'result').pop();
-  if (resultMsg) {
-    return resultMsg.result ?? resultMsg.text ?? '';
-  }
+    const cliArgs = [
+      '--model', model,
+      '--tools', '""',
+      '--output-format', 'json',
+    ];
 
-  // fallback: assistant メッセージから取得
-  const assistantMsg = messages.filter((m) => m.type === 'assistant').pop();
-  if (assistantMsg) {
-    const textBlock = assistantMsg.message?.content?.find((b) => b.type === 'text');
-    return textBlock?.text ?? '';
-  }
+    if (systemFile) {
+      fs.writeFileSync(systemFile, systemPrompt, 'utf-8');
+      cliArgs.push('--system-prompt-file', `"${systemFile.replace(/\\/g, '/')}"`);
+    }
 
-  throw new Error('Claude SDKから応答を取得できませんでした');
-}
+    // promptFileからstdinリダイレクトで渡す
+    const cmd = `claude -p ${cliArgs.join(' ')} < "${promptFile.replace(/\\/g, '/')}"`;
 
-// ── JSON Schema ────────────────────────────────
-const EXTRACT_SCHEMA = {
-  type: 'object',
-  properties: {
-    tasks: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: { title: { type: 'string' } },
-        required: ['title'],
-      },
-    },
-  },
-  required: ['tasks'],
-};
+    const child = spawn('bash', ['-c', cmd], {
+      timeout: 60_000,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
 
-const CLASSIFY_SCHEMA = {
-  type: 'object',
-  properties: {
-    mihaku: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: { title: { type: 'string' } },
-        required: ['title'],
-      },
-    },
-    kumo: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: { title: { type: 'string' } },
-        required: ['title'],
-      },
-    },
-  },
-  required: ['mihaku', 'kumo'],
-};
+    const stdoutChunks = [];
+    const stderrChunks = [];
 
-// ── プロンプト ─────────────────────────────────
-function buildExtractPrompt(rawText) {
-  return `あなたはタスク抽出AIです。ユーザーが音声で吐き出した生テキストから、個別のタスクを抽出してください。
+    child.stdout.on('data', (chunk) => stdoutChunks.push(chunk));
+    child.stderr.on('data', (chunk) => stderrChunks.push(chunk));
 
-## 入力テキスト
-「${rawText}」
+    child.on('close', (code) => {
+      cleanup();
+      const stdout = Buffer.concat(stdoutChunks).toString('utf-8');
+      const stderr = Buffer.concat(stderrChunks).toString('utf-8');
 
-## ルール
-1. 生テキストから意味のあるタスク・やることを抽出する
-2. 断片的・意味不明なものは除外する
-3. 各タスクを簡潔な行動文に整形する（「〜する」「〜を考える」など）
-4. 分類はしない。抽出と整形のみ`;
-}
+      if (code !== 0) {
+        reject(new Error(`CLI exited with code ${code}: ${stderr}`));
+        return;
+      }
 
-function buildClassifyPrompt(tasks) {
-  const taskList = tasks.map((t, i) => `${i + 1}. ${t.title}`).join('\n');
-  return `あなたはタスク分類AIです。以下のタスクリストを2つのグループに分類してください。
+      try {
+        const envelope = JSON.parse(stdout);
+        if (envelope.is_error) {
+          reject(new Error(`Claude error: ${envelope.result}`));
+          return;
+        }
+        resolve(envelope.result ?? '');
+      } catch {
+        resolve(stdout.trim());
+      }
+    });
 
-## タスクリスト
-${taskList}
-
-## 分類基準
-- **mihaku**: 今日やるべき重要なもの（最大3つ）
-  - 緊急性・具体性が高い
-- **kumo**: 今日じゃなくてもいいもの、メモ程度のもの
-  - 「いつかやる」「気になってる程度」
-  - 迷ったら kumo（ユーザーが後で移動できる）`;
+    child.on('error', (err) => {
+      cleanup();
+      reject(new Error(`CLI spawn error: ${err.message}`));
+    });
+  });
 }
 
 // ── レスポンスのパース ──────────────────────────
-function parseResponse(raw) {
-  // JSON文字列の場合
+function parseJsonResponse(raw) {
   try {
     return JSON.parse(raw);
   } catch {
-    // コードブロックから抽出
     const fenced = raw.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
     if (fenced) {
       return JSON.parse(fenced[1].trim());
     }
     throw new Error(`JSONパースに失敗: ${raw.slice(0, 200)}`);
   }
+}
+
+// ── システムプロンプト ─────────────────────────
+const SYSTEM_EXTRACT = `あなたはタスク抽出AIです。ユーザーが音声で吐き出した生テキストから、個別のタスクを抽出してください。
+
+ルール:
+1. 生テキストから意味のあるタスク・やることを抽出する
+2. 断片的・意味不明なものは除外する
+3. 各タスクを簡潔な行動文に整形する（「〜する」「〜を考える」など）
+4. 分類はしない。抽出と整形のみ
+
+必ず以下のJSON形式のみで返すこと（説明文・コードブロック不要）:
+{"tasks":[{"title":"..."}]}`;
+
+const SYSTEM_CLASSIFY = `あなたはタスク分類AIです。タスクリストを2つのグループに分類してください。
+
+分類基準:
+- mihaku: 今日やるべき重要なもの（最大3つ）。緊急性・具体性が高い
+- kumo: 今日じゃなくてもいいもの、メモ程度のもの。迷ったらkumo
+
+必ず以下のJSON形式のみで返すこと（説明文・コードブロック不要）:
+{"mihaku":[{"title":"..."}],"kumo":[{"title":"..."}]}`;
+
+const SYSTEM_MEETING = `あなたはmihakuアプリの5人会議AIです。ユーザーがタスクについて迷っている時、5人のキャラクターが順に発言します。
+
+## キャラクター（この順で発言を生成すること）
+
+1. **理央（りお）** — お姉さんの提案者。選択肢を広げる。構造化が得意。「こうしてみたら？」が多い。丁寧だけど敬語ではない。前の発言者がいれば、その内容に触れて展開する。
+2. **悠真（ゆうま）** — 包容力の安心役。長期視点。緊急性バイアスへのブレーキ。敬語固定。穏やか。理央の提案を受けて、別の角度から補足や問いかけをする。
+3. **心春（こはる）** — 癒しの本音引き出し。意見ではなく問いを投げる。「やりたい」と「やらなきゃ」の区別を気づかせる。柔らかい普通の話し方。前の発言の論理的な議論に対して、感情面から切り込む。
+4. **陽斗（はると）** — ムードメーカー。ユーザーの気持ちを代弁。代替案の提示。フランク。一人称「俺」。心春の問いかけを受けて、より直球でユーザーの本音を代弁する。
+5. **凛（りん）** — クーデレの反論者。前4人の発言の中から具体的な発言を引用して反論する。「○○が〜と言ったけど」の形で名指しで切り込む。見落とされたリスクを指摘。短く無駄がない口調。
+
+## ルール
+- 1人1-3文。短く。
+- 「すべき」「おすすめ」禁止。視点の提供のみ。
+- 各キャラは前の発言者の内容に触れること（掛け合い）。特に凛は前4人の具体的発言を引用して反論する。
+- 最後に全員の視点を1行ずつ要約して並べる。
+
+## 出力形式（厳守。JSON形式で返すこと）
+{"messages":[{"character":"rio","text":"..."},{"character":"yuma","text":"..."},{"character":"koharu","text":"..."},{"character":"haruto","text":"..."},{"character":"rin","text":"..."}],"summary":["理央の視点要約","悠真の視点要約","心春の視点要約","陽斗の視点要約","凛の視点要約"]}`;
+
+function buildMeetingPrompt(body) {
+  const parts = [];
+
+  if (body.userProfile) {
+    parts.push(`## ユーザー情報\n${body.userProfile}`);
+  }
+
+  parts.push(`## フェーズ: ${body.phase === 'sukuu' ? 'すくう（全体俯瞰）' : 'みがく（個別タスク深堀り）'}`);
+  parts.push(`## タスクの状況\n${body.taskContext}`);
+
+  if (body.history && body.history.length > 0) {
+    const historyText = body.history
+      .map((m) => `【${m.character}】${m.text}`)
+      .join('\n');
+    parts.push(`## これまでの会議\n${historyText}`);
+  }
+
+  parts.push(`## ユーザーの相談\n${body.userMessage}`);
+
+  return parts.join('\n\n');
 }
 
 // ── サーバー ───────────────────────────────────
@@ -191,7 +234,7 @@ const server = createServer(async (req, res) => {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({
       status: 'ok',
-      mode: 'claude-sdk',
+      mode: 'cli',
       models: { fast: MODEL_FAST, quality: MODEL_QUALITY },
     }));
     return;
@@ -219,9 +262,12 @@ const server = createServer(async (req, res) => {
       console.log(`[extract] input: "${rawText.slice(0, 80)}..."`);
       recordRequest();
 
-      const prompt = buildExtractPrompt(rawText);
-      const raw = await callClaude(prompt, MODEL_FAST, EXTRACT_SCHEMA);
-      const parsed = parseResponse(raw);
+      const raw = await callClaude(
+        `以下のテキストからタスクを抽出してください:\n「${rawText}」`,
+        MODEL_FAST,
+        SYSTEM_EXTRACT,
+      );
+      const parsed = parseJsonResponse(raw);
 
       console.log(`[extract] tasks: ${parsed.tasks?.length ?? 0}`);
 
@@ -257,9 +303,13 @@ const server = createServer(async (req, res) => {
       console.log(`[classify] tasks: ${tasks.length}`);
       recordRequest();
 
-      const prompt = buildClassifyPrompt(tasks);
-      const raw = await callClaude(prompt, MODEL_QUALITY, CLASSIFY_SCHEMA);
-      const parsed = parseResponse(raw);
+      const taskList = tasks.map((t, i) => `${i + 1}. ${t.title}`).join('\n');
+      const raw = await callClaude(
+        `以下のタスクを分類してください:\n${taskList}`,
+        MODEL_QUALITY,
+        SYSTEM_CLASSIFY,
+      );
+      const parsed = parseJsonResponse(raw);
 
       console.log(`[classify] mihaku: ${parsed.mihaku?.length ?? 0}, kumo: ${parsed.kumo?.length ?? 0}`);
 
@@ -273,10 +323,40 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // ── Meeting（5人会議・Sonnet）── iter7で実装 ──
+  // ── Meeting（5人会議・Sonnet） ─────────────────
   if (req.method === 'POST' && req.url === '/api/meeting') {
-    res.writeHead(501, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'iter7で実装予定' }));
+    const rateCheck = checkThrottle();
+    if (!rateCheck.allowed) {
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: rateCheck.reason }));
+      return;
+    }
+
+    try {
+      const body = JSON.parse(await readBody(req));
+
+      if (!body.userMessage || !body.taskContext) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'userMessage and taskContext are required' }));
+        return;
+      }
+
+      console.log(`[meeting] phase: ${body.phase ?? 'migaku'}, task: "${(body.taskContext ?? '').slice(0, 60)}..."`);
+      recordRequest();
+
+      const prompt = buildMeetingPrompt(body);
+      const raw = await callClaude(prompt, MODEL_QUALITY, SYSTEM_MEETING);
+      const parsed = parseJsonResponse(raw);
+
+      console.log(`[meeting] messages: ${parsed.messages?.length ?? 0}`);
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(parsed));
+    } catch (err) {
+      console.error('[meeting] error:', err.message);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 
@@ -298,7 +378,7 @@ server.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  mihaku proxy server`);
   console.log(`  ───────────────────`);
   console.log(`  http://0.0.0.0:${PORT}`);
-  console.log(`  mode: Claude Code SDK`);
+  console.log(`  mode: CLI (claude -p --tools "")`);
   console.log(`  models: ${MODEL_FAST} (extract) / ${MODEL_QUALITY} (classify, meeting)`);
   console.log(`  cost: $0 (Max subscription)\n`);
 });

@@ -45,5 +45,23 @@ export async function initDatabase(db: SQLiteDatabase) {
       reason TEXT,
       released_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS meeting_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id INTEGER REFERENCES tasks(id),
+      phase TEXT NOT NULL DEFAULT 'migaku',
+      user_message TEXT NOT NULL,
+      messages_json TEXT NOT NULL,
+      summary_json TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS meeting_reactions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      meeting_id INTEGER NOT NULL REFERENCES meeting_logs(id) ON DELETE CASCADE,
+      character TEXT NOT NULL,
+      reaction TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
 }
