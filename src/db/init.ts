@@ -65,4 +65,13 @@ export async function initDatabase(db: SQLiteDatabase) {
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
   `);
+
+  // マイグレーション: 既存DBに time_slot カラムがない場合追加
+  try {
+    await db.execAsync(
+      `ALTER TABLE tasks ADD COLUMN time_slot TEXT NOT NULL DEFAULT 'unset'`
+    );
+  } catch {
+    // カラムが既に存在する場合はエラーになるが無視
+  }
 }
