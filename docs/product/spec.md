@@ -169,7 +169,7 @@ Freeプラン・トライアルともに廃止。**DL → 即課金画面 → �
 ---
 ## 8. 画面イメージ
 ### ホーム画面(開発中)
-(※ `mihaku-home.png` 参照)
+![mihaku ホーム画面](home-mockup.png)
 - ヘッダー: アプリ名 + ☕(5人会議入口)+ ストック
 - 日替わりの一言(ヘッダー下にイタリック表示)
 - タスクカード: 展開するとサブタスク・メモが見える
@@ -232,7 +232,6 @@ Freeプラン・トライアルともに廃止。**DL → 即課金画面 → �
 ---
 ## 12. リポジトリ
 - **コード**: `C:\ClaudeCode\projects\mihaku`(GitHub: akira1999work-debug/mihaku)
-- **設計ドキュメント**: `C:\ClaudeCode\mihaku\[CLAUDE.md](http://CLAUDE.md)`
-- **キャラ設定**: `C:\ClaudeCode\mihaku\CHARACTER_[SHEETS.md](http://SHEETS.md)`
-- **公開ドキュメント**: GitHub: akira1999work-debug/mihaku-docs
+- **設計ドキュメント**: `C:\ClaudeCode\mihaku\CLAUDE.md`
+- **キャラ設定**: `C:\ClaudeCode\mihaku\CHARACTER_SHEETS.md`
 - **ブランチ**: `feat/v1-scaffold`
